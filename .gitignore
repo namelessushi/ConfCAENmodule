@@ -1,0 +1,14 @@
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+logs/
+*.log
+*.csv
+
+# Entornos virtuales
+venv/
+.env
