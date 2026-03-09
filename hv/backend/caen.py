@@ -209,11 +209,4 @@ class CAENBackend(HVBackend):
 
 
 
-    def clear_channel_alarms(self, ch):
-            """
-            Limpia alarmas latched del canal HV.
-            """
-            try:
-                self.device.clear_channel_alarm(ch)
-            except Exception as e:
-                raise RuntimeError(f"Error limpiando alarmas CH{ch}: {e}")
+
