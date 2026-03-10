@@ -40,18 +40,30 @@ class HVChannel:
         self._last_update = time.monotonic()
 
 
-    def vmon(self):
-        if self._last_update == 0:
-            return self.backend.get_vmon(self.ch)
-
-        
-        self.last_vmon = self._vmon_cache
-
+    def vmon(self, use_cache=True):
+        """
+        Retorna VMON. 
+        Si use_cache=False, fuerza lectura directa del backend (ignora cache).
+        """
+        if not use_cache or self._last_update == 0:
+            v = self.backend.get_vmon(self.ch)
+            i = self.backend.get_imon(self.ch)
+            self.update_cache(v, i)
+            self.last_vmon = v
+            self.last_imon = i
+            return v
         return self._vmon_cache
 
-    def imon(self):
-        self.last_imon = self._imon_cache
+    def imon(self, use_cache=True):
+        if not use_cache or self._last_update == 0:
+            v = self.backend.get_vmon(self.ch)
+            i = self.backend.get_imon(self.ch)
+            self.update_cache(v, i)
+            self.last_vmon = v
+            self.last_imon = i
+            return i
         return self._imon_cache
+
 
 
 
