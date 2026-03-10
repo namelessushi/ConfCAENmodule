@@ -120,16 +120,18 @@ class CAENBackend(HVBackend):
         self.logger.info(f"CH{ch}: VSET fijado en {vset:.2f} V")
 
     def set_current(self, ch, iset):
-
+        # iset está en Amperios
         if iset > self.I_MAX:
             raise HVSafetyError(f"CH{ch}: ISET {iset}A excede máximo físico")
+      # **NO multiplicar por 1e6 si la fuente ya espera A**
+        iset_to_send = iset * 1e6  # solo si la fuente espera µA
 
-        iset_ua = iset * 1e6
-        cmd = f"$CMD:SET,CH:{ch},PAR:ISET,VAL:{iset_ua:.2f}"
+        cmd = f"$CMD:SET,CH:{ch},PAR:ISET,VAL:{iset_to_send:.2f}"
         resp = self.send_command(cmd)
         self._expect_ok(resp, "ISET")
 
-        self.logger.info(f"CH{ch}: ISET fijado en {iset_ua:.2f} uA")
+        self.logger.info(f"CH{ch}: ISET fijado en {iset_to_send:.2f} uA")
+
 
     def set_ramp_up(self, ch, ramp_speed):
 
