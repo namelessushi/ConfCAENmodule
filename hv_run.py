@@ -335,6 +335,10 @@ class HVRunner:
 # MAIN
 # ==========================================================
 
+# ==========================================================
+# MAIN
+# ==========================================================
+
 def main():
 
     runner = HVRunner(CONFIG)
@@ -343,8 +347,34 @@ def main():
         runner.initialize()
         
         runner.start_monitor()
-        time.sleep(20)  # dar tiempo al primer ciclo del monitor
+        time.sleep(2)  # dar tiempo al primer ciclo del monitor
 
+        # --------------------------------------------------
+        # THREAD DE MONITOREO DE DIRECCIÓN
+        # --------------------------------------------------
+        import threading
+
+        def monitor_direction(channel_index: int, interval: float = 0.05):
+            ch = runner.monitor.get_channel(channel_index)
+            last_v = ch.vmon()
+            while True:
+                try:
+                    v = ch.vmon()
+                    state = ch.state.name
+                    direction = "UP" if v > last_v else "DOWN" if v < last_v else "STABLE"
+                    print(f"[Channel {channel_index}] Vmon = {v:.2f} V, State = {state}, Direction = {direction}")
+                    last_v = v
+                    time.sleep(interval)
+                except Exception as e:
+                    runner.logger.error(f"Error monitor_direction CH{channel_index}: {e}")
+                    time.sleep(interval)
+
+        # Lanzar thread daemon (no bloquea)
+        threading.Thread(target=monitor_direction, args=(0,), daemon=True).start()
+
+        # --------------------------------------------------
+        # CONTINÚA CON EL POWER-UP NORMAL
+        # --------------------------------------------------
         runner.power_up()
 
         runner.start_watchdog()
