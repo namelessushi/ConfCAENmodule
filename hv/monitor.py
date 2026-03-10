@@ -6,97 +6,59 @@ from collections import deque
 import logging
 
 from .state import HVState
-
-
-class HVSample:
-    """Muestra instantánea del sistema HV."""
-    def __init__(self, ts, vmon, imon, ramping, status):
-        self.ts = ts
-        self.vmon = vmon
-        self.imon = imon
-        self.ramping = ramping
-        self.status = status
-
-    def as_dict(self):
-        return {
-            "timestamp": self.ts,
-            "vmon": self.vmon,
-            "imon": self.imon,
-            "ramping": self.ramping,
-            "status": self.status,
-        }
-
+from .alarm_manager import AlarmManager
 
 class HVMonitor:
-    """
-    Monitor pasivo de HV que:
-
-    - Toma muestras periódicas
-    - Evalúa alarmas usando AlarmManager externo
-    - No toma decisiones de apagado (solo logging)
-    """
-
-    def __init__(
-        self,
-        channel,
-        backend,
-        alarm_manager=None,
-        period=10,
-        buffer_size=360,
-        logger=None,
-    ):
-        self.channel = channel
+    def __init__(self, hv_system, backend, alarm_manager=None, period=1.0, logger=None):
+        self.hv_system = hv_system
         self.backend = backend
         self.alarm_manager = alarm_manager
         self.period = period
-        self.samples = deque(maxlen=buffer_size)
         self._running = False
-        self.logger = logger or logging.getLogger(f"HV.Monitor.CH{channel.ch}")
+        self.logger = logger or logging.getLogger("HV.Monitor")
 
-    def sample(self):
-        """Toma una muestra y la almacena en el buffer."""
-        ts = datetime.now().isoformat()
-        vmon = self.channel.vmon()
-        imon = self.channel.imon()
-        status = self.backend.get_channel_status(self.channel.ch) or {}
+    def _sample_all(self):
+        # Leemos todos los canales en batch
+        try:
+            vmon_all = self.backend.get_all_vmon()
+            imon_all = self.backend.get_all_imon()
+            status_all = self.backend.get_all_status()
+            
 
-        # Ramping directo desde bits 2 y 4
-        stat = status.get("stat", 0)
-        ramping = bool(stat & 2) or bool(stat & 4)
 
-        # Crear objeto de muestra
-        sample = HVSample(ts, vmon, imon, ramping, status)
-        self.samples.append(sample)
+            for ch in self.hv_system.channels:
 
-        # Evaluación de alarmas
-        if self.alarm_manager:
-            # Preparar dict coherente para todas las alarmas
-            sample_dict = sample.as_dict()
-            sample_dict["vset"] = self.channel.vset  # necesario para VoltageMismatchAlarm
+                v = vmon_all[ch.ch]
+                i = imon_all[ch.ch]
+                status = status_all[ch.ch]
+                
+                ch.update_cache(v, i)
+                ch._last_status = status
 
-            results = self.alarm_manager.evaluate(sample_dict)
-            for name, result in results:
-                if result is None:
-                    continue
-                if result.is_critical():
-                    self.logger.critical(f"Alarma crítica [{name}]: {result.message}")
+                sample = {"timestamp": datetime.now(), "vmon": v, "imon": i, "vset": ch.vset, "ramping": status_all[ch.ch].get("ramping", False)}
 
-        return sample
 
-    def run(self, callback=None):
-        """Loop principal del monitor."""
+                if self.alarm_manager:
+                    self.alarm_manager.evaluate(sample)
+
+
+        except Exception as e:
+            self.logger.error(f"Error leyendo backend: {e}")
+
+
+    def run(self):
         self._running = True
+        next_tick = time.monotonic()
+
         while self._running:
-            try:
-                sample = self.sample()
-                if callback:
-                    callback(sample)
-            except Exception as e:
-                self.logger.error(f"Error de muestreo: {e}")
-            time.sleep(self.period)
+
+            self._sample_all()
+
+            next_tick += self.period
+            time.sleep(max(0, next_tick - time.monotonic()))
+
 
     def stop(self):
         self._running = False
-
-
-
+    
+    

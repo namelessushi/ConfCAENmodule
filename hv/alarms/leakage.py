@@ -50,7 +50,7 @@ class LeakageAlarm(BaseAlarm):
 
         # Pendiente promedio simple
         delta_i = self._imon_buffer[-1] - self._imon_buffer[0]
-        slope = delta_i / len(self._imon_buffer)
+        slope = delta_i / (len(self._imon_buffer)-1)
 
         if slope > self.slope_threshold:
             return AlarmResult(

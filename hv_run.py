@@ -16,6 +16,13 @@ from hv.watchdog import HVWatchdog
 from hv.state_manager import HVStateManager
 from hv.system import HVSystem
 
+from hv.alarm_manager import AlarmManager
+from hv.alarms.leakage import LeakageAlarm
+from hv.alarms.mismatch import VoltageMismatchAlarm
+from hv.alarms.voltage_stability import VoltageStabilityAlarm
+from hv.monitor import HVMonitor
+
+
 
 # ==========================================================
 # CONFIGURACIÓN CENTRAL
@@ -119,45 +126,7 @@ class HVRunner:
         # DEADMAN (protección freeze)
         # ============================
 
-        self.last_heartbeat = time.time()
-        self.deadman_timeout = config["deadman_timeout"]
         self.deadman_thread = None
-
-
-    # ------------------------------------------------------
-    # DEADMAN SUPERVISOR
-    # ------------------------------------------------------
-
-    def heartbeat(self):
-        self.last_heartbeat = time.time()
-
-    def deadman_supervisor(self):
-
-        self.logger.info("Deadman timer activo")
-
-        while self.running:
-
-            elapsed = time.time() - self.last_heartbeat
-
-            if elapsed > self.deadman_timeout:
-                self.logger.critical(
-                    f"Deadman activado: {elapsed:.1f}s sin actividad"
-                )
-
-                # Mata proceso → systemd lo reinicia
-                os._exit(1)
-
-            time.sleep(5)
-
-    def start_deadman(self):
-
-        self.deadman_thread = threading.Thread(
-            target=self.deadman_supervisor,
-            daemon=True
-        )
-
-        self.deadman_thread.start()
-
 
     # ------------------------------------------------------
     # Conexión robusta
@@ -201,8 +170,14 @@ class HVRunner:
 
             self.hv_system.add_channel(ch)
 
-        for ch in self.hv_system.channels:
-            ch.setup()
+        self.alarm_manager = AlarmManager([LeakageAlarm(), VoltageMismatchAlarm(), VoltageStabilityAlarm()])
+
+        self.monitor = HVMonitor(hv_system=self.hv_system, backend=self.backend, alarm_manager=self.alarm_manager, period=1.0, logger=self.logger)
+
+        state = self.state_mgr.load()
+
+        if state:
+            self.hv_system.restore_all(state)
 
 
     # ------------------------------------------------------
@@ -218,7 +193,6 @@ class HVRunner:
                 raise RuntimeError(f"Fallo encendiendo CH{ch.ch}")
 
         self.logger.info("Todos los canales ON")
-
 
     # ------------------------------------------------------
     # Watchdog físico
@@ -244,45 +218,32 @@ class HVRunner:
 
     def run_loop(self):
 
-        interval = self.config["log_interval"]
+        t = threading.Thread(target=self.monitor.run, daemon=True)
+        t.start()
 
-        self.logger.info("Sistema HV en operación")
+        last_log = 0
+        last_save = 0
 
         while self.running:
+ 
+            now = time.time()
 
-            try:
-
-                self.heartbeat()
+            # CSV logging
+            if now - last_log > self.config["log_interval"]:
 
                 for ch in self.hv_system.channels:
+                    self.csv_logger.log(ch.ch, ch.vmon(), ch.imon(), ch.state.name)
 
-                    v = ch.vmon()
-                    i = ch.imon()
-                    status = self.backend.get_channel_status(ch.ch) or {}
+                last_log = now
 
-                    self.logger.info(
-                        f"[CH{ch.ch}] V={v:.2f} V | I={i:.3e} A | {status}"
-                    )
-
-                    self.csv_logger.log(ch.ch, v, i, status)
-
+            # guardar estado
+            if now - last_save > 30:
                 self.state_mgr.save(self.hv_system.channels)
+                last_save = now
 
-                time.sleep(interval)
+            time.sleep(0.5)
 
-            except Exception as e:
 
-                self.logger.critical(f"Error en run_loop: {e}")
-                self.logger.warning("Intentando reconexión completa...")
-
-                try:
-                    self.shutdown_channels_only()
-                    self.initialize()
-                    self.power_up()
-                    self.logger.info("Reconexión exitosa")
-                except Exception as recon_error:
-                    self.logger.critical(f"Reconexión fallida: {recon_error}")
-                    time.sleep(10)
 
 
     # ------------------------------------------------------
@@ -347,7 +308,6 @@ def main():
 
     try:
         runner.install_signal_handlers()
-        runner.start_deadman()
         runner.initialize()
         runner.power_up()
         runner.start_watchdog()

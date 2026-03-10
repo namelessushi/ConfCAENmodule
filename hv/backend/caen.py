@@ -206,6 +206,14 @@ class CAENBackend(HVBackend):
                 self.logger.warning(f"Error cerrando VISA: {e}")
 
 
+    def get_all_vmon(self):
+        return {ch: self.get_vmon(ch) for ch in range(4)}
+
+    def get_all_imon(self):
+        return {ch: self.get_imon(ch) for ch in range(4)}
+
+    def get_all_status(self):
+        return {ch: self.get_channel_status(ch) for ch in range(4)}
 
 
 

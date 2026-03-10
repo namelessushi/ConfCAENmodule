@@ -1,5 +1,6 @@
 # hv/watchdog.py
 
+import signal
 import time
 import logging
 import os
@@ -9,6 +10,8 @@ from collections import deque
 
 from .state import HVState
 from .safety import HVLimits
+
+
 
 
 # ==========================================================
@@ -28,8 +31,7 @@ def _deadman_process(conn, timeout):
 
         if time.monotonic() - last_tick > timeout:
             print("DEADMAN TRIGGERED - HARD EXIT")
-            os._exit(1)
-
+            os.kill(os.getpid(), signal.SIGKILL)
 
 # ==========================================================
 # WATCHDOG INDUSTRIAL
@@ -134,7 +136,9 @@ class HVWatchdog:
                     return
 
                 # Energía acumulada
-                power = v * i
+                i_filtered = min(i, ch.iset * 2)
+                power = abs(v * i_filtered)
+
                 energy = power * dt
 
                 buf = self.energy_buffer[ch.ch]
@@ -150,7 +154,8 @@ class HVWatchdog:
                     self._fault(ch, f"Energía acumulada alta {total_energy:.3f} J")
                     return
 
-        self.prev_sample[ch.ch] = {"v": v, "t": now}
+        self.prev_sample[ch.ch] = {"v": v, "i": i, "t": now}
+
 
 
     # ======================================================
@@ -161,51 +166,57 @@ class HVWatchdog:
 
         now = time.monotonic()
 
-        if now - self.last_ok[ch.ch] > self.max_silence:
-            self._fault(ch, "Backend silencioso")
+        # Detectar si el monitor dejó de actualizar
+        if now - ch._last_update > self.max_silence:
+            self._fault(ch, "Monitor/Backend silencioso")
             return
 
         try:
+
             v = ch.vmon()
             i = ch.imon()
-            status = ch.backend.get_channel_status(ch.ch)
-            self.last_ok[ch.ch] = now
+            status = getattr(ch, "_last_status", {})
+
+            self._verify_fsm_invariants(ch, status)
+ 
+            if ch.state == HVState.ON:
+
+                # VMON ≈ 0 persistente
+                if v < self.VMON_ZERO_THRESHOLD:
+                    if self._vmon_zero_start[ch.ch] is None:
+                        self._vmon_zero_start[ch.ch] = now
+                    elif now - self._vmon_zero_start[ch.ch] > self.VMON_ZERO_TIME:
+                        self._fault(ch, "VMON≈0 persistente")
+                        return
+                else:
+                    self._vmon_zero_start[ch.ch] = None
+
+
+                # Drift respecto a VSET
+                if ch.vset != 0:
+                    rel_error = abs(v - ch.vset) / abs(ch.vset)
+
+                    if rel_error > self.DRIFT_REL_TOL:
+                        if self._drift_start[ch.ch] is None:
+                            self._drift_start[ch.ch] = now
+                        elif now - self._drift_start[ch.ch] > self.DRIFT_TIME:
+                            self._fault(ch, "Drift persistente")
+                            return
+                    else:
+                        self._drift_start[ch.ch] = None
+
+
+                # Sobrecorriente
+                if i > ch.iset * HVLimits.I_TRIP_FACTOR:
+                    self._fault(ch, "Sobrecorriente software")
+                    return
+
+
+                # Protección dinámica (energía / dV/dt)
+                self._dynamic_protection(ch, v, i, now)
+
         except Exception as e:
-            self.logger.error(f"[CH{ch.ch}] Error lectura: {e}")
-            return
-
-        self._verify_fsm_invariants(ch, status)
-
-        if ch.state == HVState.ON:
-
-            # VMON≈0
-            if v < self.VMON_ZERO_THRESHOLD:
-                if self._vmon_zero_start[ch.ch] is None:
-                    self._vmon_zero_start[ch.ch] = now
-                elif now - self._vmon_zero_start[ch.ch] > self.VMON_ZERO_TIME:
-                    self._fault(ch, "VMON≈0 persistente")
-                    return
-            else:
-                self._vmon_zero_start[ch.ch] = None
-
-            # Drift
-            rel_error = abs(v - ch.vset) / abs(ch.vset)
-            if rel_error > self.DRIFT_REL_TOL:
-                if self._drift_start[ch.ch] is None:
-                    self._drift_start[ch.ch] = now
-                elif now - self._drift_start[ch.ch] > self.DRIFT_TIME:
-                    self._fault(ch, "Drift persistente")
-                    return
-            else:
-                self._drift_start[ch.ch] = None
-
-            # Sobrecorriente
-            if i > ch.iset * HVLimits.I_TRIP_FACTOR:
-                self._fault(ch, "Sobrecorriente software")
-                return
-
-            # Protección dinámica
-            self._dynamic_protection(ch, v, i, now)
+            self.logger.error(f"[CH{ch.ch}] Watchdog error: {e}")
 
 
     # ======================================================
@@ -216,7 +227,8 @@ class HVWatchdog:
 
         self.logger.critical(f"[CH{ch.ch}] FAULT: {reason}")
 
-        ch.state = HVState.FAULT
+        if ch.state != HVState.FAULT:
+            ch.state = HVState.FAULT
 
         if self.auto_shutdown:
             try:
@@ -230,6 +242,7 @@ class HVWatchdog:
     # ======================================================
 
     def _loop(self):
+        next_tick = time.monotonic()
 
         while self._running:
 
@@ -244,10 +257,15 @@ class HVWatchdog:
                 except:
                     pass
 
+            # Chequeo canales
             for ch in self.channels:
                 self._check_channel(ch)
 
-            time.sleep(self.check_period)
+            # Programar siguiente tick
+            next_tick += self.check_period
+            time.sleep(max(0, next_tick - time.monotonic()))
+
+
 
 
     # ======================================================

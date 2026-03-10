@@ -26,16 +26,18 @@ class VoltageMismatchAlarm(BaseAlarm):
         if vmon is None or vset is None:
             return AlarmResult(AlarmLevel.OK)
 
+        if vmon is None or vset is None:
+            return AlarmResult(AlarmLevel.OK)
+
         if abs(vmon - vset) > self.tolerance:
             self.counter += 1
         else:
             self.counter = 0
 
         if self.counter >= self.max_samples:
-            return AlarmResult(
-                AlarmLevel.CRITICAL,
-                f"VMON ({vmon:.1f} V) != VSET ({vset:.1f} V) persistente"
-            )
+            return AlarmResult(AlarmLevel.CRITICAL, f"VMON mismatch persistente ({vmon:.1f} vs {vset:.1f})")
 
         return AlarmResult(AlarmLevel.OK)
+
+
 

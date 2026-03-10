@@ -22,6 +22,25 @@ class HVChannel:
         self.state = HVState.OFF
         self.last_vmon = 0.0
         self.last_imon = 0.0
+        self._vmon_cache = 0.0
+        self._imon_cache = 0.0
+        self._last_update = 0.0
+
+    def update_cache(self,v,i):
+        self._vmon_cache = v
+        self._imon_cache = i
+        self._last_update = time.monotonic()
+
+
+    def vmon(self):
+        self.last_vmon = self._vmon_cache
+        return self._vmon_cache
+
+    def imon(self):
+        self.last_imon = self._imon_cache
+        return self._imon_cache
+
+
 
     # -----------------------------
     # Configuración y Encendido
@@ -40,9 +59,11 @@ class HVChannel:
         El canal debe estar cercano a 0V (no a VSET).
         """
 
-        vmon = self.vmon()
-        imon = self.imon()
+        vmon = self.backend.get_vmon(self.ch)
+        imon = self.backend.get_imon(self.ch)
         status = self.backend.get_channel_status(self.ch)
+
+
 
         # ---- Voltaje residual antes de encender ----
         if vmon > max_off_voltage:
@@ -124,6 +145,8 @@ class HVChannel:
         while time.time() - start_time < timeout:
 
             status = self.backend.get_channel_status(self.ch)
+
+
             if status is None:
                 logger.warning(f"[CH{self.ch}] No se pudo leer estado, reintentando...")
                 time.sleep(0.5)
@@ -172,19 +195,7 @@ class HVChannel:
             logger.error(f"[CH{self.ch}] Fallo al apagar: {e}")
         self.state = HVState.OFF
 
-    # -----------------------------
-    # Getters directos al backend
-    # -----------------------------
-    def vmon(self):
-        v = self.backend.get_vmon(self.ch)
-        self.last_vmon = v
-        return v
-
-    def imon(self):
-        i = self.backend.get_imon(self.ch)
-        self.last_imon = i
-        return i
-
+ 
     # -----------------------------
     # Powerdown / KILL
     # -----------------------------
@@ -251,5 +262,6 @@ class HVChannel:
             raise
     
     def is_ramping(self):
-        status = self.backend.get_channel_status(self.ch)
+        status = getattr(self, "_last_status", {})
         return status.get("ramping", False)
+

@@ -36,3 +36,5 @@ class HVStateManager:
 
         with open(self.path) as f:
             return json.load(f)
+        
+        
