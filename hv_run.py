@@ -370,44 +370,9 @@ def main():
         threading.Thread(target=monitor_direction, args=(0,), daemon=True).start()
 
         # -------------------------------
-        # THREAD DE PLOTEO EN TIEMPO REAL (mitad inferior)
+        # THREAD DE PLOTEO EN TIEMPO REAL (mitad inferior, borrado)
         # -------------------------------
-        import plotext as plt
 
-        def plot_vmon_half_terminal(channel_index: int, interval: float = 1.0, max_points: int = 100):
-            ch = runner.hv_system.channels[channel_index]
-            t_values = []
-            v_values = []
-            start_time = time.time()
-
-            # Ajustar tamaño de canvas para solo mitad de la terminal
-            height, width = plt.terminal_size()
-            plt.set_size(width, height // 2)
-
-            while True:
-                try:
-                    v = ch.vmon()
-                    t = time.time() - start_time
-                    t_values.append(t)
-                    v_values.append(v)
-
-                    if len(t_values) > max_points:
-                        t_values = t_values[-max_points:]
-                        v_values = v_values[-max_points:]
-
-                    plt.clear_figure()
-                    plt.plot(t_values, v_values, label=f"CH{channel_index} Vmon")
-                    plt.title(f"Vmon CH{channel_index} en tiempo real")
-                    plt.xlabel("Tiempo [s]")
-                    plt.ylabel("Voltaje [V]")
-                    plt.show()
-                    plt.sleep(interval)
-
-                except Exception as e:
-                    runner.logger.error(f"Error plot_vmon CH{channel_index}: {e}")
-                    time.sleep(interval)
-
-        threading.Thread(target=plot_vmon_half_terminal, args=(0,), daemon=True).start()
 
         # -------------------------------
         # POWER-UP y WATCHDOG
