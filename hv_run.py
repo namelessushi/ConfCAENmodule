@@ -351,7 +351,7 @@ def main():
         # -------------------------------
         import threading
 
-        def monitor_direction(channel_index: int, interval: float = 0.05):
+        def monitor_direction(channel_index: int, interval: float = 0.2):
             ch = runner.hv_system.channels[channel_index]
             last_v = ch.vmon()
             while True:
@@ -373,7 +373,7 @@ def main():
         # -------------------------------
         import plotext as plt
 
-        def plot_vmon_half_terminal(channel_index: int, interval: float = 0.5, max_points: int = 100):
+        def plot_vmon_half_terminal(channel_index: int, interval: float = 1.0, max_points: int = 100):
             ch = runner.hv_system.channels[channel_index]
             t_values = []
             v_values = []
