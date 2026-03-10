@@ -26,6 +26,14 @@ class HVChannel:
         self._imon_cache = 0.0
         self._last_update = 0.0
 
+        try:
+            self.update_cache(
+                self.backend.get_vmon(self.ch),
+                self.backend.get_imon(self.ch)
+            )
+        except Exception as e:
+            logger.warning(f"[CH{self.ch}] No se pudo inicializar cache: {e}")
+
     def update_cache(self,v,i):
         self._vmon_cache = v
         self._imon_cache = i
@@ -33,7 +41,12 @@ class HVChannel:
 
 
     def vmon(self):
+        if self._last_update == 0:
+            return self.backend.get_vmon(self.ch)
+
+        
         self.last_vmon = self._vmon_cache
+
         return self._vmon_cache
 
     def imon(self):
@@ -167,6 +180,11 @@ class HVChannel:
                 )
                 self.turn_off()
                 return False
+            
+            if status.get("ramping"):
+                time.sleep(0.5)
+                continue
+
 
             if v_actual > HVLimits.V_MAX:
                 logger.critical(
@@ -262,6 +280,11 @@ class HVChannel:
             raise
     
     def is_ramping(self):
-        status = getattr(self, "_last_status", {})
-        return status.get("ramping", False)
+        try:
+            status = self.backend.get_channel_status(self.ch)
+            return status.get("ramping", False) if status else False
+        except Exception as e:
+            logger.error(f"[CH{self.ch}] Error is_ramping(): {e}")
+            return False
+
 

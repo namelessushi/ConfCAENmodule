@@ -186,10 +186,11 @@ class HVRunner:
 
         self.monitor = HVMonitor(hv_system=self.hv_system, backend=self.backend, alarm_manager=self.alarm_manager, period=1.0, logger=self.logger)
 
-        state = self.state_mgr.load()
+        #state = self.state_mgr.load()
 
-        if state:
-            self.hv_system.restore_all(state)
+        #if state:
+        #    self.hv_system.restore_all(state)
+
 
 
     # ------------------------------------------------------
@@ -225,6 +226,19 @@ class HVRunner:
 
 
     # ------------------------------------------------------
+    # Señales
+    # ------------------------------------------------------
+
+    def _signal_handler(self, sig, frame):
+        self.logger.warning(f"Señal {sig} recibida")
+        self.running = False
+
+    def install_signal_handlers(self):
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+
+    # ------------------------------------------------------
     # Loop principal robusto
     # ------------------------------------------------------
 
@@ -242,11 +256,13 @@ class HVRunner:
 
             # CSV logging
             if now - last_log > self.config["log_interval"]:
-
                 for ch in self.hv_system.channels:
-                    self.csv_logger.log(ch.ch, ch.vmon(), ch.imon(), ch.state.name)
-
+                    try:
+                        self.csv_logger.log(ch.ch, ch.vmon(), ch.imon(), ch.state.name)
+                    except Exception as e:
+                        self.logger.error(f"Error log CSV CH{ch.ch}: {e}")
                 last_log = now
+
 
             # guardar estado
             if now - last_save > 30:
@@ -276,38 +292,43 @@ class HVRunner:
     # ------------------------------------------------------
 
     def shutdown(self):
-
         self.logger.warning("Shutdown seguro HV iniciado")
 
+        # 🔹 Detener watchdog
         if self.watchdog:
             try:
                 self.watchdog.stop()
-            except:
-                pass
+            except Exception as e:
+                self.logger.error(f"Error deteniendo watchdog: {e}")
 
+        # 🔹 Apagar canales con timeout ramping
         for ch in self.hv_system.channels:
             try:
                 ch.turn_off()
-                while ch.is_ramping():
-                    time.sleep(1)
+                timeout = 30
+                start = time.time()
+                while ch.is_ramping() and (time.time() - start < timeout):
+                    time.sleep(0.5)
+                if ch.is_ramping():
+                    self.logger.warning(f"[CH{ch.ch}] Ramping no terminó después de {timeout}s")
             except Exception as e:
                 self.logger.error(f"Error apagando CH{ch.ch}: {e}")
 
+        # 🔹 Esperar monitor
+        if hasattr(self, "monitor") and self.monitor:
+            self.monitor.stop()
+            if hasattr(self.monitor, "thread"):
+                self.monitor.thread.join(timeout=5)
+
+        # 🔹 Cerrar CSV logger
         self.csv_logger.close()
         self.logger.info("HV completamente apagado")
 
 
-    # ------------------------------------------------------
-    # Señales
-    # ------------------------------------------------------
 
-    def _signal_handler(self, sig, frame):
-        self.logger.warning(f"Señal {sig} recibida")
-        self.running = False
+    
 
-    def install_signal_handlers(self):
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+    
 
 
 # ==========================================================
@@ -320,12 +341,16 @@ def main():
 
     try:
         runner.initialize()
+        
+        runner.start_monitor()
+        time.sleep(20)  # dar tiempo al primer ciclo del monitor
+
         runner.power_up()
 
-        runner.start_monitor()
-        time.sleep(2)  # dar tiempo al primer ciclo del monitor
-
         runner.start_watchdog()
+
+        runner.install_signal_handlers()
+        time.sleep(1)
 
         runner.run_loop()
 

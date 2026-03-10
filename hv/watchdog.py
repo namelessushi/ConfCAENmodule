@@ -19,6 +19,8 @@ from .safety import HVLimits
 # ==========================================================
 
 def _deadman_process(conn, timeout):
+    import os, time, logging
+    logging.basicConfig(level=logging.CRITICAL)
     last_tick = time.monotonic()
 
     while True:
@@ -30,8 +32,10 @@ def _deadman_process(conn, timeout):
                 break
 
         if time.monotonic() - last_tick > timeout:
-            print("DEADMAN TRIGGERED - HARD EXIT")
-            os.kill(os.getpid(), signal.SIGKILL)
+            logging.critical("DEADMAN TRIGGERED: timeout excedido")
+            # Notificar al padre con señal
+            os.kill(os.getppid(), signal.SIGTERM)
+            break
 
 # ==========================================================
 # WATCHDOG INDUSTRIAL
@@ -110,7 +114,7 @@ class HVWatchdog:
 
     def _verify_fsm_invariants(self, ch, status):
 
-        if ch.state == HVState.ON and not status.get("on", False):
+        if ch.state == HVState.ON and not (status.get("on") or status.get("ramping")):
             self._fault(ch, "FSM violation: ON pero hardware no ON")
 
 
@@ -246,16 +250,20 @@ class HVWatchdog:
 
         while self._running:
 
-            # Heartbeat proceso
+            # Heartbeat deadman
             if self._deadman_parent_conn:
-                self._deadman_parent_conn.send(1)
+                try:
+                    self._deadman_parent_conn.send(1)
+                except Exception as e:
+                    self.logger.error(f"Heartbeat deadman falló: {e}")
 
             # Heartbeat Arduino
             if self.arduino:
                 try:
                     self.arduino.write(b"HEARTBEAT\n")
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.error(f"Arduino heartbeat falló: {e}")
+
 
             # Chequeo canales
             for ch in self.channels:
@@ -296,10 +304,14 @@ class HVWatchdog:
 
 
     def stop(self):
-
         self._running = False
 
         if self._deadman_process:
             self._deadman_process.terminate()
+            self._deadman_process.join(timeout=2)  # esperar a que termine
 
-        self.logger.info("Watchdog detenido.")
+        if self._thread:
+            self._thread.join(timeout=2)  # esperar loop watchdog
+
+        self.logger.info("Watchdog detenido")
+
