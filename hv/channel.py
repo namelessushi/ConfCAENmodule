@@ -87,7 +87,7 @@ class HVChannel:
         vmon = self.backend.get_vmon(self.ch)
         imon = self.backend.get_imon(self.ch)
         status = self.backend.get_channel_status(self.ch)
-        print(f"[DEBUG] CH{self.ch} status: {status}, I_actual={i_actual:.6f}")
+        print(f"[DEBUG] CH{self.ch} status: {status}, I_actual={imon:.6f}")
 
 
 
@@ -170,17 +170,17 @@ class HVChannel:
 
         while time.time() - start_time < timeout:
 
+            v_actual = self.vmon()
+            i_actual = self.imon()
             status = self.backend.get_channel_status(self.ch)
             print(f"[DEBUG] CH{self.ch} status: {status}, I_actual={i_actual:.6f}")
+
 
 
             if status is None:
                 logger.warning(f"[CH{self.ch}] No se pudo leer estado, reintentando...")
                 time.sleep(0.5)
                 continue
-
-            v_actual = self.vmon()
-            i_actual = self.imon()
 
             # --------- Checks críticos ---------
             if status.get("kill") or status.get("interlock"):
