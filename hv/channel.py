@@ -87,6 +87,7 @@ class HVChannel:
         vmon = self.backend.get_vmon(self.ch)
         imon = self.backend.get_imon(self.ch)
         status = self.backend.get_channel_status(self.ch)
+        print(f"[DEBUG] CH{self.ch} status: {status}, I_actual={i_actual:.6f}")
 
 
 
@@ -170,6 +171,7 @@ class HVChannel:
         while time.time() - start_time < timeout:
 
             status = self.backend.get_channel_status(self.ch)
+            print(f"[DEBUG] CH{self.ch} status: {status}, I_actual={i_actual:.6f}")
 
 
             if status is None:
@@ -186,12 +188,12 @@ class HVChannel:
                 self.turn_off()
                 return False
 
-            if status.get("ovc") or i_actual > HVLimits.I_MAX:
-                logger.critical(
-                    f"[CH{self.ch}] Sobrecorriente detectada ({i_actual:.3e}A)! Apagando..."
-                )
-                self.turn_off()
-                return False
+            #if status.get("ovc") or i_actual > HVLimits.I_MAX:
+            #    logger.critical(
+            #        f"[CH{self.ch}] Sobrecorriente detectada ({i_actual:.3e}A)! Apagando..."
+            #    )
+            #    self.turn_off()
+            #    return False
             
             if status.get("ramping"):
                 time.sleep(0.5)
