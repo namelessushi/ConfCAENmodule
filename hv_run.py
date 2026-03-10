@@ -128,6 +128,18 @@ class HVRunner:
 
         self.deadman_thread = None
 
+    # -----------------------------------------------
+    # Inicio del Monitor
+    #------------------------------------------------
+
+    def start_monitor(self):
+
+        t = threading.Thread(target=self.monitor.run, daemon=True)
+        t.start()
+
+        self.logger.info("Monitor iniciado")
+
+
     # ------------------------------------------------------
     # Conexión robusta
     # ------------------------------------------------------
@@ -307,11 +319,16 @@ def main():
     runner = HVRunner(CONFIG)
 
     try:
-        runner.install_signal_handlers()
         runner.initialize()
         runner.power_up()
+
+        runner.start_monitor()
+        time.sleep(2)  # dar tiempo al primer ciclo del monitor
+
         runner.start_watchdog()
+
         runner.run_loop()
+
 
     except Exception as e:
         runner.logger.critical(f"Error crítico en main: {e}")
