@@ -381,7 +381,7 @@ def main():
 
             # Ajustar tamaño de canvas para solo mitad de la terminal
             height, width = plt.terminal_size()
-            plt.canvas_size(width, height // 2)
+            plt.size(width, height // 2)
 
             while True:
                 try:
