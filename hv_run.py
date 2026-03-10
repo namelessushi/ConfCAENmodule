@@ -347,13 +347,7 @@ def main():
         runner.initialize()
         
         # -------------------------------
-        # Lanzar monitor principal
-        # -------------------------------
-        runner.start_monitor()
-        time.sleep(2)  # dar tiempo al primer ciclo del monitor
-
-        # -------------------------------
-        # THREAD DE MONITOREO DE DIRECCIÓN
+        # THREAD DE MONITOREO DE DIRECCIÓN (mitad superior)
         # -------------------------------
         import threading
 
@@ -375,15 +369,19 @@ def main():
         threading.Thread(target=monitor_direction, args=(0,), daemon=True).start()
 
         # -------------------------------
-        # THREAD DE PLOTEO EN TIEMPO REAL (ASCII)
+        # THREAD DE PLOTEO EN TIEMPO REAL (mitad inferior)
         # -------------------------------
         import plotext as plt
 
-        def plot_vmon_real_time(channel_index: int, interval: float = 0.5, max_points: int = 100):
+        def plot_vmon_half_terminal(channel_index: int, interval: float = 0.5, max_points: int = 100):
             ch = runner.hv_system.channels[channel_index]
             t_values = []
             v_values = []
             start_time = time.time()
+
+            # Ajustar tamaño de canvas para solo mitad de la terminal
+            height, width = plt.terminal_size()
+            plt.canvas_size(width, height // 2)
 
             while True:
                 try:
@@ -392,12 +390,11 @@ def main():
                     t_values.append(t)
                     v_values.append(v)
 
-                    # Limitar número de puntos
                     if len(t_values) > max_points:
                         t_values = t_values[-max_points:]
                         v_values = v_values[-max_points:]
 
-                    plt.clear_data()
+                    plt.clear_figure()
                     plt.plot(t_values, v_values, label=f"CH{channel_index} Vmon")
                     plt.title(f"Vmon CH{channel_index} en tiempo real")
                     plt.xlabel("Tiempo [s]")
@@ -409,10 +406,10 @@ def main():
                     runner.logger.error(f"Error plot_vmon CH{channel_index}: {e}")
                     time.sleep(interval)
 
-        threading.Thread(target=plot_vmon_real_time, args=(0,), daemon=True).start()
+        threading.Thread(target=plot_vmon_half_terminal, args=(0,), daemon=True).start()
 
         # -------------------------------
-        # POWER-UP
+        # POWER-UP y WATCHDOG
         # -------------------------------
         runner.power_up()
         runner.start_watchdog()
