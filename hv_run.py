@@ -198,14 +198,15 @@ class HVRunner:
     # ------------------------------------------------------
 
     def power_up(self):
-
         self.logger.info("Encendido automático de canales HV")
-
         for ch in self.hv_system.channels:
+            # Forzar la primera lectura desde backend antes de encender
+            _ = ch.vmon(use_cache=False)
+            _ = ch.imon(use_cache=False)
             if not ch.turn_on(timeout=60):
                 raise RuntimeError(f"Fallo encendiendo CH{ch.ch}")
-
         self.logger.info("Todos los canales ON")
+
 
     # ------------------------------------------------------
     # Watchdog físico
