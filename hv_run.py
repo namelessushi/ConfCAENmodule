@@ -355,7 +355,7 @@ def main():
         import threading
 
         def monitor_direction(channel_index: int, interval: float = 0.05):
-            ch = runner.monitor.get_channel(channel_index)
+            ch = runner.hv_system.channels[channel_index]  # <--- usar hv_system
             last_v = ch.vmon()
             while True:
                 try:
@@ -368,6 +368,7 @@ def main():
                 except Exception as e:
                     runner.logger.error(f"Error monitor_direction CH{channel_index}: {e}")
                     time.sleep(interval)
+
 
         # Lanzar thread daemon (no bloquea)
         threading.Thread(target=monitor_direction, args=(0,), daemon=True).start()
