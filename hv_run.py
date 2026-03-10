@@ -346,16 +346,19 @@ def main():
     try:
         runner.initialize()
         
+        # -------------------------------
+        # Lanzar monitor principal
+        # -------------------------------
         runner.start_monitor()
         time.sleep(2)  # dar tiempo al primer ciclo del monitor
 
-        # --------------------------------------------------
+        # -------------------------------
         # THREAD DE MONITOREO DE DIRECCIÓN
-        # --------------------------------------------------
+        # -------------------------------
         import threading
 
         def monitor_direction(channel_index: int, interval: float = 0.05):
-            ch = runner.hv_system.channels[channel_index]  # <--- usar hv_system
+            ch = runner.hv_system.channels[channel_index]
             last_v = ch.vmon()
             while True:
                 try:
@@ -369,20 +372,56 @@ def main():
                     runner.logger.error(f"Error monitor_direction CH{channel_index}: {e}")
                     time.sleep(interval)
 
-
-        # Lanzar thread daemon (no bloquea)
         threading.Thread(target=monitor_direction, args=(0,), daemon=True).start()
 
-        # --------------------------------------------------
-        # CONTINÚA CON EL POWER-UP NORMAL
-        # --------------------------------------------------
+        # -------------------------------
+        # THREAD DE PLOTEO EN TIEMPO REAL (ASCII)
+        # -------------------------------
+        import plotext as plt
+
+        def plot_vmon_real_time(channel_index: int, interval: float = 0.5, max_points: int = 100):
+            ch = runner.hv_system.channels[channel_index]
+            t_values = []
+            v_values = []
+            start_time = time.time()
+
+            while True:
+                try:
+                    v = ch.vmon()
+                    t = time.time() - start_time
+                    t_values.append(t)
+                    v_values.append(v)
+
+                    # Limitar número de puntos
+                    if len(t_values) > max_points:
+                        t_values = t_values[-max_points:]
+                        v_values = v_values[-max_points:]
+
+                    plt.clear_data()
+                    plt.plot(t_values, v_values, label=f"CH{channel_index} Vmon")
+                    plt.title(f"Vmon CH{channel_index} en tiempo real")
+                    plt.xlabel("Tiempo [s]")
+                    plt.ylabel("Voltaje [V]")
+                    plt.show()
+                    plt.sleep(interval)
+
+                except Exception as e:
+                    runner.logger.error(f"Error plot_vmon CH{channel_index}: {e}")
+                    time.sleep(interval)
+
+        threading.Thread(target=plot_vmon_real_time, args=(0,), daemon=True).start()
+
+        # -------------------------------
+        # POWER-UP
+        # -------------------------------
         runner.power_up()
-
         runner.start_watchdog()
-
         runner.install_signal_handlers()
         time.sleep(1)
 
+        # -------------------------------
+        # LOOP PRINCIPAL
+        # -------------------------------
         runner.run_loop()
 
 
@@ -396,3 +435,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
