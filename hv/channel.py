@@ -309,7 +309,7 @@ class HVChannel:
         try:
             status = self.backend.get_channel_status(self.ch)
             if status is None:
-                self.logger.warning(f"[CH{self.ch}] No se pudo leer estado del backend")
+                logger.warning(f"[CH{self.ch}] No se pudo leer estado del backend")
                 return
             
             if status.get("kill") or status.get("interlock"):
@@ -323,7 +323,7 @@ class HVChannel:
             else:
                 self.state = HVState.OFF
                 
-            self.logger.debug(f"[CH{self.ch}] Estado actualizado: {self.state.name}")
+            logger.debug(f"[CH{self.ch}] Estado actualizado: {self.state.name}")
             
         except Exception as e:
-            self.logger.error(f"[CH{self.ch}] Error actualizando estado: {e}")
+            logger.error(f"[CH{self.ch}] Error actualizando estado: {e}")
