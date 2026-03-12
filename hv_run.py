@@ -1,4 +1,13 @@
 # hv_run.py
+"""
+Sistema de control de alto voltaje para PMT detector con módulos CAEN DT55XXE.
+
+Flujo:
+    1. Inicializar sistema (backend, canales, monitor, watchdog)
+    2. Encender canales en secuencia
+    3. Loop infinito monitoreo + logging
+    4. Shutdown graceful en signals
+"""
 
 import time
 import csv
@@ -6,8 +15,10 @@ import signal
 import sys
 import os
 import threading
+import logging
 from datetime import datetime
 from pathlib import Path
+from collections import namedtuple
 
 from hv.backend.caen import CAENBackend
 from hv.channel import HVChannel
@@ -23,7 +34,6 @@ from hv.alarms.voltage_stability import VoltageStabilityAlarm
 from hv.monitor import HVMonitor
 
 
-
 # ==========================================================
 # CONFIGURACIÓN CENTRAL
 # ==========================================================
@@ -31,7 +41,8 @@ from hv.monitor import HVMonitor
 CONFIG = {
     "resource": "ASRL/dev/ttyACM0::INSTR",
     "connection_retry": 30,
-    "deadman_timeout": 60,   # segundos sin heartbeat → kill proceso
+    "connection_timeout": 5000,
+    "deadman_timeout": 60,
     "channels": [
         {
             "ch": 0,
@@ -41,8 +52,11 @@ CONFIG = {
         }
     ],
     "watchdog": {
-        "check_period": 2.0,
+        "check_period": 0.5,
         "auto_shutdown": True,
+    },
+    "monitor": {
+        "period": 1.0,  # Período de muestreo del monitor
     },
     "log_interval": 10.0,
     "log_directory": "logs",
@@ -54,6 +68,7 @@ CONFIG = {
 # ==========================================================
 
 class DailyCSVLogger:
+    """Logger CSV que rota diariamente con headers automáticos."""
 
     def __init__(self, log_dir):
         self.log_dir = Path(log_dir)
@@ -63,6 +78,7 @@ class DailyCSVLogger:
         self.writer = None
 
     def _open_new_file(self, day):
+        """Abre un nuevo archivo CSV y escribe headers."""
         filename = self.log_dir / f"hv_log_{day.strftime('%Y%m%d')}.csv"
         file = open(filename, "a", newline="")
         writer = csv.writer(file)
@@ -82,6 +98,7 @@ class DailyCSVLogger:
         self.current_day = day
 
     def log(self, channel_id, v, i, status):
+        """Log una muestra al archivo CSV rotativo."""
         now = datetime.now()
 
         if self.current_day != now.date():
@@ -92,128 +109,177 @@ class DailyCSVLogger:
         self.writer.writerow([
             now.isoformat(),
             channel_id,
-            v,
-            i,
+            f"{v:.2f}",
+            f"{i:.3e}",
             status
         ])
         self.file.flush()
 
     def close(self):
+        """Cierra el archivo CSV."""
         if self.file:
             self.file.close()
 
 
 # ==========================================================
-# CONTROLADOR PRINCIPAL
+# CONTROLADOR PRINCIPAL - HVRunner
 # ==========================================================
 
 class HVRunner:
+    """
+    Orquestador principal del sistema HV.
+    
+    Responsabilidades:
+    - Inicializar componentes (backend, sistema, monitor, watchdog)
+    - Encender canales
+    - Loop principal con logging y persistencia
+    - Shutdown graceful
+    """
 
     def __init__(self, config):
-
         self.config = config
         self.logger = setup_logger()
 
+        # Componentes principales
         self.backend = None
         self.hv_system = HVSystem()
         self.watchdog = None
         self.state_mgr = HVStateManager()
         self.csv_logger = DailyCSVLogger(config["log_directory"])
+        self.alarm_manager = None
+        self.monitor = None
 
+        # Control de flujo
         self.running = True
+        self._monitor_thread = None
+        self._watchdog_thread = None
 
-        # ============================
-        # DEADMAN (protección freeze)
-        # ============================
+        self.logger.info("HVRunner inicializado")
 
-        self.deadman_thread = None
-
-    # -----------------------------------------------
-    # Inicio del Monitor
-    #------------------------------------------------
-
-    def start_monitor(self):
-
-        t = threading.Thread(target=self.monitor.run, daemon=True)
-        t.start()
-
-        self.logger.info("Monitor iniciado")
-
-
-    # ------------------------------------------------------
-    # Conexión robusta
-    # ------------------------------------------------------
+    # ====================================================
+    # INICIALIZACIÓN
+    # ====================================================
 
     def connect_backend(self):
-
+        """Conecta al backend CAEN con reintentos."""
         retry_time = self.config["connection_retry"]
 
         while True:
             try:
                 self.logger.info("Intentando conectar al módulo CAEN...")
                 backend = CAENBackend(self.config["resource"])
-                self.logger.info("Conexión establecida")
+                self.logger.info("✅ Conexión CAEN establecida")
                 return backend
 
             except Exception as e:
-                self.logger.error(f"Error conexión backend: {e}")
-                self.logger.warning(f"Reintentando en {retry_time}s...")
+                self.logger.error(f"❌ Error conexión backend: {e}")
+                self.logger.warning(f"   Reintentando en {retry_time}s...")
                 time.sleep(retry_time)
 
-
-    # ------------------------------------------------------
-    # Inicialización
-    # ------------------------------------------------------
-
     def initialize(self):
+        """Inicializa todos los componentes del sistema."""
+        self.logger.info("=" * 60)
+        self.logger.info("INICIALIZANDO SISTEMA HV")
+        self.logger.info("=" * 60)
 
+        # 1. Conectar backend
         self.backend = self.connect_backend()
         self.hv_system = HVSystem()
 
+        # 2. Crear canales
         for ch_cfg in self.config["channels"]:
-
             ch = HVChannel(
                 ch=ch_cfg["ch"],
                 backend=self.backend,
                 vset=ch_cfg["vset"],
                 iset=ch_cfg["iset"],
-                rup=ch_cfg["rup"],
+                rup=ch_cfg.get("rup", 20),
             )
-
             self.hv_system.add_channel(ch)
+            self.logger.info(f"   ✓ CH{ch.ch} creado (VSET={ch.vset}V, ISET={ch.iset}A)")
 
-        self.alarm_manager = AlarmManager([LeakageAlarm(), VoltageMismatchAlarm(), VoltageStabilityAlarm()])
+        # 3. Crear alarm manager
+        self.alarm_manager = AlarmManager([
+            LeakageAlarm(),
+            VoltageMismatchAlarm(),
+            VoltageStabilityAlarm()
+        ])
+        self.logger.info("   ✓ Alarmas inicializadas")
 
-        self.monitor = HVMonitor(hv_system=self.hv_system, backend=self.backend, alarm_manager=self.alarm_manager, period=1.0, logger=self.logger)
+        # 4. Crear monitor (pero NO iniciarlo aún)
+        self.monitor = HVMonitor(
+            hv_system=self.hv_system,
+            backend=self.backend,
+            alarm_manager=self.alarm_manager,
+            period=self.config["monitor"]["period"],
+            logger=self.logger
+        )
+        self.logger.info("   ✓ Monitor creado")
 
-        #state = self.state_mgr.load()
+        self.logger.info("✅ Sistema inicializado correctamente\n")
 
-        #if state:
-        #    self.hv_system.restore_all(state)
-
-
-
-    # ------------------------------------------------------
-    # Encendido automático SIEMPRE
-    # ------------------------------------------------------
+    # ====================================================
+    # OPERACIONES DE POTENCIA
+    # ====================================================
 
     def power_up(self):
-        self.logger.info("Encendido automático de canales HV")
+        """Enciende todos los canales en secuencia."""
+        self.logger.info("=" * 60)
+        self.logger.info("POWER-UP: Encendiendo canales")
+        self.logger.info("=" * 60)
+
         for ch in self.hv_system.channels:
-            # Forzar la primera lectura desde backend antes de encender
-            _ = ch.vmon()
-            _ = ch.imon()
-            if not ch.turn_on(timeout=60):
-                raise RuntimeError(f"Fallo encendiendo CH{ch.ch}")
-        self.logger.info("Todos los canales ON")
+            try:
+                # Lectura inicial forzada
+                vmon = ch.vmon(use_cache=False)
+                imon = ch.imon(use_cache=False)
+                self.logger.info(f"CH{ch.ch}: VMON={vmon:.2f}V, IMON={imon:.3e}A")
 
+                # Encender con timeout
+                self.logger.info(f"CH{ch.ch}: Iniciando encendido...")
+                success = ch.turn_on(timeout=60)
 
-    # ------------------------------------------------------
-    # Watchdog físico
-    # ------------------------------------------------------
+                if success:
+                    self.logger.info(f"✅ CH{ch.ch} encendido correctamente")
+                else:
+                    self.logger.error(f"❌ CH{ch.ch} NO alcanzó VSET en timeout")
+                    raise RuntimeError(f"Fallo power-up CH{ch.ch}")
+
+            except Exception as e:
+                self.logger.critical(f"❌ Error encendiendo CH{ch.ch}: {e}")
+                self.shutdown()
+                raise
+
+        self.logger.info("✅ Todos los canales encendidos\n")
+
+    def power_down(self):
+        """Apaga todos los canales."""
+        self.logger.warning("POWER-DOWN: Apagando canales")
+        for ch in self.hv_system.channels:
+            try:
+                ch.turn_off()
+                self.logger.info(f"✓ CH{ch.ch} apagado")
+            except Exception as e:
+                self.logger.error(f"Error apagando CH{ch.ch}: {e}")
+
+    # ====================================================
+    # THREADS DE FONDO
+    # ====================================================
+
+    def start_monitor(self):
+        """Inicia el thread del monitor."""
+        self.logger.info("Iniciando monitor...")
+        self._monitor_thread = threading.Thread(
+            target=self.monitor.run,
+            name="HV-Monitor",
+            daemon=False
+        )
+        self._monitor_thread.start()
+        self.logger.info("✓ Monitor iniciado")
 
     def start_watchdog(self):
-
+        """Inicia el watchdog."""
+        self.logger.info("Iniciando watchdog...")
         wd_cfg = self.config["watchdog"]
 
         self.watchdog = HVWatchdog(
@@ -222,174 +288,187 @@ class HVRunner:
             auto_shutdown=wd_cfg["auto_shutdown"]
         )
 
-        self.watchdog.start()
-        self.logger.info("Watchdog activo")
+        self._watchdog_thread = threading.Thread(
+            target=self.watchdog.start,
+            name="HV-Watchdog",
+            daemon=False
+        )
+        self._watchdog_thread.start()
+        self.logger.info("✓ Watchdog iniciado")
 
-
-    # ------------------------------------------------------
-    # Señales
-    # ------------------------------------------------------
+    # ====================================================
+    # MANEJO DE SEÑALES
+    # ====================================================
 
     def _signal_handler(self, sig, frame):
-        self.logger.warning(f"Señal {sig} recibida")
+        """Handler para SIGINT (Ctrl+C) y SIGTERM."""
+        sig_name = {
+            signal.SIGINT: "SIGINT (Ctrl+C)",
+            signal.SIGTERM: "SIGTERM"
+        }.get(sig, f"Signal {sig}")
+        
+        self.logger.warning(f"\n⚠️ Recibida señal: {sig_name}")
         self.running = False
 
     def install_signal_handlers(self):
+        """Instala handlers para signals de terminación."""
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+        self.logger.info("✓ Signal handlers instalados")
 
-
-    # ------------------------------------------------------
-    # Loop principal robusto
-    # ------------------------------------------------------
+    # ====================================================
+    # LOOP PRINCIPAL
+    # ====================================================
 
     def run_loop(self):
-
-        t = threading.Thread(target=self.monitor.run, daemon=True)
-        t.start()
+        """Loop principal: logging + persistencia."""
+        self.logger.info("=" * 60)
+        self.logger.info("LOOP PRINCIPAL: Monitoreo activo")
+        self.logger.info("=" * 60)
 
         last_log = 0
         last_save = 0
 
-        while self.running:
- 
-            now = time.time()
+        try:
+            while self.running:
+                now = time.time()
 
-            # CSV logging
-            if now - last_log > self.config["log_interval"]:
-                for ch in self.hv_system.channels:
+                # CSV logging cada log_interval segundos
+                if now - last_log > self.config["log_interval"]:
+                    for ch in self.hv_system.channels:
+                        try:
+                            v = ch.vmon(use_cache=True)
+                            i = ch.imon(use_cache=True)
+                            status = ch.state.name
+                            self.csv_logger.log(ch.ch, v, i, status)
+                        except Exception as e:
+                            self.logger.error(f"Error log CSV CH{ch.ch}: {e}")
+                    last_log = now
+
+                # Persistencia de estado cada 30 segundos
+                if now - last_save > 30:
                     try:
-                        self.csv_logger.log(ch.ch, ch.vmon(), ch.imon(), ch.state.name)
+                        self.state_mgr.save(self.hv_system.channels)
                     except Exception as e:
-                        self.logger.error(f"Error log CSV CH{ch.ch}: {e}")
-                last_log = now
+                        self.logger.error(f"Error guardando estado: {e}")
+                    last_save = now
 
+                time.sleep(0.5)
 
-            # guardar estado
-            if now - last_save > 30:
-                self.state_mgr.save(self.hv_system.channels)
-                last_save = now
+        except KeyboardInterrupt:
+            self.logger.warning("Interrupción en loop principal")
+        except Exception as e:
+            self.logger.critical(f"Error en loop principal: {e}")
+            raise
 
-            time.sleep(0.5)
+        self.logger.info("✓ Loop principal terminado")
 
-
-
-
-    # ------------------------------------------------------
-    # Apagar solo canales
-    # ------------------------------------------------------
-
-    def shutdown_channels_only(self):
-
-        for ch in self.hv_system.channels:
-            try:
-                ch.turn_off()
-            except:
-                pass
-
-
-    # ------------------------------------------------------
-    # Shutdown completo
-    # ------------------------------------------------------
+    # ====================================================
+    # SHUTDOWN GRACEFUL
+    # ====================================================
 
     def shutdown(self):
-        self.logger.warning("Shutdown seguro HV iniciado")
+        """Shutdown seguro y ordenado."""
+        self.logger.warning("=" * 60)
+        self.logger.warning("SHUTDOWN: Deteniendo sistema")
+        self.logger.warning("=" * 60)
 
-        # 🔹 Detener watchdog
+        # 1. Señalar parada
+        self.running = False
+
+        # 2. Detener monitor (espera a que termine)
+        if self.monitor:
+            try:
+                self.logger.info("Deteniendo monitor...")
+                self.monitor.stop()
+                if self._monitor_thread and self._monitor_thread.is_alive():
+                    self._monitor_thread.join(timeout=5)
+                    self.logger.info("✓ Monitor detenido")
+            except Exception as e:
+                self.logger.error(f"Error deteniendo monitor: {e}")
+
+        # 3. Detener watchdog (espera a que termine)
         if self.watchdog:
             try:
+                self.logger.info("Deteniendo watchdog...")
                 self.watchdog.stop()
+                if self._watchdog_thread and self._watchdog_thread.is_alive():
+                    self._watchdog_thread.join(timeout=5)
+                    self.logger.info("✓ Watchdog detenido")
             except Exception as e:
                 self.logger.error(f"Error deteniendo watchdog: {e}")
 
-        # 🔹 Apagar canales con timeout ramping
+        # 4. Apagar canales con timeout
+        self.logger.info("Apagando canales...")
         for ch in self.hv_system.channels:
             try:
                 ch.turn_off()
+
+                # Esperar a que ramping termine
                 timeout = 30
                 start = time.time()
                 while ch.is_ramping() and (time.time() - start < timeout):
-                    time.sleep(0.5)
+                    time.sleep(0.2)
+
                 if ch.is_ramping():
-                    self.logger.warning(f"[CH{ch.ch}] Ramping no terminó después de {timeout}s")
+                    self.logger.warning(f"CH{ch.ch}: Ramping no terminó después de {timeout}s")
+                else:
+                    self.logger.info(f"✓ CH{ch.ch} apagado")
+
             except Exception as e:
                 self.logger.error(f"Error apagando CH{ch.ch}: {e}")
 
-        # 🔹 Esperar monitor
-        if hasattr(self, "monitor") and self.monitor:
-            self.monitor.stop()
-            if hasattr(self.monitor, "thread"):
-                self.monitor.thread.join(timeout=5)
+        # 5. Cerrar backend
+        if self.backend:
+            try:
+                self.logger.info("Cerrando backend...")
+                self.backend.close()
+                self.logger.info("✓ Backend cerrado")
+            except Exception as e:
+                self.logger.error(f"Error cerrando backend: {e}")
 
-        # 🔹 Cerrar CSV logger
-        self.csv_logger.close()
-        self.logger.info("HV completamente apagado")
+        # 6. Cerrar CSV logger
+        try:
+            self.csv_logger.close()
+        except Exception as e:
+            self.logger.error(f"Error cerrando CSV logger: {e}")
 
+        self.logger.warning("=" * 60)
+        self.logger.warning("✅ SHUTDOWN COMPLETADO")
+        self.logger.warning("=" * 60)
 
-
-    
-
-    
-
-
-# ==========================================================
-# MAIN
-# ==========================================================
 
 # ==========================================================
 # MAIN
 # ==========================================================
 
 def main():
-
+    """Función principal."""
     runner = HVRunner(CONFIG)
 
     try:
-        runner.initialize()
-        
-        # -------------------------------
-        # THREAD DE MONITOREO DE DIRECCIÓN (mitad superior)
-        # -------------------------------
-        import threading
-
-        def monitor_direction(channel_index: int, interval: float = 0.2):
-            ch = runner.hv_system.channels[channel_index]
-            last_v = ch.vmon()
-            while True:
-                try:
-                    v = ch.vmon()
-                    state = ch.state.name
-                    direction = "UP" if v > last_v else "DOWN" if v < last_v else "STABLE"
-                    print(f"[Channel {channel_index}] Vmon = {v:.2f} V, State = {state}, Direction = {direction}")
-                    last_v = v
-                    time.sleep(interval)
-                except Exception as e:
-                    runner.logger.error(f"Error monitor_direction CH{channel_index}: {e}")
-                    time.sleep(interval)
-
-        threading.Thread(target=monitor_direction, args=(0,), daemon=True).start()
-
-        # -------------------------------
-        # THREAD DE PLOTEO EN TIEMPO REAL (mitad inferior, borrado)
-        # -------------------------------
-
-
-        # -------------------------------
-        # POWER-UP y WATCHDOG
-        # -------------------------------
-        runner.power_up()
-        runner.start_watchdog()
+        # Instalación temprana de handlers (importante)
         runner.install_signal_handlers()
+
+        # Inicializar
+        runner.initialize()
+
+        # Iniciar threads de fondo
+        runner.start_monitor()
+        runner.start_watchdog()
+
+        # Power-up
+        runner.power_up()
+
+        # Pequeña pausa después de power-up
         time.sleep(1)
 
-        # -------------------------------
-        # LOOP PRINCIPAL
-        # -------------------------------
+        # Loop infinito
         runner.run_loop()
 
-
     except Exception as e:
-        runner.logger.critical(f"Error crítico en main: {e}")
+        runner.logger.critical(f"❌ ERROR CRÍTICO: {e}", exc_info=True)
+        sys.exit(1)
 
     finally:
         runner.shutdown()
@@ -398,4 +477,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

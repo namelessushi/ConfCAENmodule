@@ -38,3 +38,16 @@ class HVBackend(ABC):
     @abstractmethod
     def close(self):
         pass
+
+    #implementado 12/03/2026
+    @abstractmethod
+    def get_all_vmon(self):
+        pass
+
+    @abstractmethod
+    def get_all_imon(self):
+        pass
+
+    @abstractmethod
+    def get_all_status(self):
+        pass
