@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from hv.backend.mock_caen import MockCAENBackend  # 👈 Aquí usamos el mock
+from hv.backend.mock import MockCAENBackend  # 👈 Aquí usamos el mock
 from hv.channel import HVChannel
 from hv.logger import setup_logger
 from hv.watchdog import HVWatchdog
