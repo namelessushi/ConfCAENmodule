@@ -1,4 +1,4 @@
-#ConfCAENmodule/hv/backend/base.py
+ url=https://github.com/namelessushi/ConfCAENmodule/blob/main/hv/backend/base.py
 from abc import ABC, abstractmethod
 
 class HVBackend(ABC):
@@ -9,6 +9,10 @@ class HVBackend(ABC):
 
     @abstractmethod
     def set_current(self, ch, current):
+        pass
+
+    @abstractmethod
+    def set_ramp_up(self, ch, ramp_speed):
         pass
 
     @abstractmethod
@@ -25,4 +29,12 @@ class HVBackend(ABC):
 
     @abstractmethod
     def get_imon(self, ch):
+        pass
+
+    @abstractmethod
+    def get_channel_status(self, ch):
+        pass
+
+    @abstractmethod
+    def close(self):
         pass

@@ -168,8 +168,8 @@ class HVRunner:
     def power_up(self):
         self.logger.info("Encendido automático de canales HV (MOCK)")
         for ch in self.hv_system.channels:
-            _ = ch.vmon(use_cache=False)
-            _ = ch.imon(use_cache=False)
+            _ = ch.vmon()
+            _ = ch.imon()
             if not ch.turn_on(timeout=60):
                 raise RuntimeError(f"Fallo encendiendo CH{ch.ch}")
         self.logger.info("Todos los canales ON (MOCK)")

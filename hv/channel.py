@@ -300,5 +300,30 @@ class HVChannel:
         except Exception as e:
             logger.error(f"[CH{self.ch}] Error is_ramping(): {e}")
             return False
-
-
+        
+    def update_state(self):
+        """
+        Actualiza el estado del canal sincronizándolo con el backend.
+        Lee el estado actual del hardware y actualiza self.state.
+        """
+        try:
+            status = self.backend.get_channel_status(self.ch)
+            if status is None:
+                self.logger.warning(f"[CH{self.ch}] No se pudo leer estado del backend")
+                return
+            
+            if status.get("kill") or status.get("interlock"):
+                self.state = HVState.FAULT
+            elif status.get("on"):
+                # Verificar si está ramping
+                if status.get("ramping"):
+                    self.state = HVState.RAMPING_UP
+                else:
+                    self.state = HVState.ON
+            else:
+                self.state = HVState.OFF
+                
+            self.logger.debug(f"[CH{self.ch}] Estado actualizado: {self.state.name}")
+            
+        except Exception as e:
+            self.logger.error(f"[CH{self.ch}] Error actualizando estado: {e}")
