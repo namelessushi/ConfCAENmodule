@@ -1,4 +1,4 @@
-# hv/backend/mock_caen.py
+# hv/backend/mock.py
 
 import time
 import logging
@@ -8,15 +8,21 @@ from hv.safety import HVSafetyError
 
 
 class MockCAENBackend(HVBackend):
+    """Mock del módulo CAEN DT5533EN con PMT Hamamatsu R14374."""
 
-    V_MAX = 1500.0
-    I_MAX = 1e-4
-    P_MAX_CH = 5.0
-    P_MAX_TOTAL = 20.0
+    # Límites del PMT Hamamatsu R14374
+    V_MAX = 1500.0              # Voltaje máximo
+    I_MAX = 100e-6              # Corriente máxima (100 μA)
+    
+    # Límites del CAEN DT5533EN
+    P_MAX_CH = 4.0              # Potencia máxima por canal (W)
+    P_MAX_TOTAL = 16.0          # Potencia máxima total (W)
 
     def __init__(self):
         self.logger = logging.getLogger("HV.Backend.MockCAEN")
-        self.logger.info("Iniciando MockCAENBackend (sin hardware)")
+        self.logger.info(
+            "Iniciando MockCAENBackend (CAEN DT5533EN + Hamamatsu R14374 PMT)"
+        )
         self._lock = threading.Lock()
         self.active_channels = set()
 
@@ -32,7 +38,7 @@ class MockCAENBackend(HVBackend):
                 "maxv": False,
                 "kill": False,
                 "interlock": False
-            } for ch in range(4)
+            } for ch in range(4)  # 4 canales CAEN
         }
 
     # ==================================================
@@ -40,10 +46,8 @@ class MockCAENBackend(HVBackend):
     # ==================================================
     def send_command(self, cmd):
         self.logger.debug(f"[Mock] send_command: {cmd}")
-        # Devuelve un OK genérico para cualquier SET
         if "SET" in cmd:
             return "OK"
-        # Devuelve VAL:0 para monitores
         return "VAL:0"
 
     def _expect_ok(self, resp, context="SET"):
@@ -108,7 +112,19 @@ class MockCAENBackend(HVBackend):
         return ch_state["vmon"]
 
     def get_imon(self, ch):
-        return self._channels[ch]["iset"] + 1e-6
+        """
+        Simula lectura de corriente con comportamiento realista del PMT.
+        
+        - Durante ramping: 5% de ISET (corriente de control)
+        - En estado estable: ISET + ruido pequeño (1nA)
+        """
+        ch_state = self._channels[ch]
+        if ch_state["ramping"]:
+            # Durante ramping: pequeña corriente de control
+            return ch_state["iset"] * 0.05 + 1e-9
+        else:
+            # En estado estable: corriente nominal + ruido mínimo
+            return ch_state["iset"] + 1e-9
 
     def get_channel_status(self, ch):
         return self._channels[ch].copy()

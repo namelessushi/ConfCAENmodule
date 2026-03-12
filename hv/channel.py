@@ -165,17 +165,29 @@ class HVChannel:
             return False
 
 
+    
+
     def wait_until_vset(self, timeout=30, tolerance=1.5):
+        """
+        Espera hasta que el canal alcance VSET dentro de tolerancia.
+    
+        Parameters
+        ----------
+        timeout : float
+            Máximo tiempo de espera en segundos
+        tolerance : float
+            Tolerancia en voltios respecto a VSET
+        """
         start_time = time.time()
 
         while time.time() - start_time < timeout:
 
-            v_actual = self.vmon()
-            i_actual = self.imon()
+            v_actual = self.vmon(use_cache=False)
+            i_actual = self.imon(use_cache=False)
             status = self.backend.get_channel_status(self.ch)
-            print(f"[DEBUG] CH{self.ch} status: {status}, I_actual={i_actual:.6f}")
-
-
+        
+            elapsed = time.time() - start_time
+            logger.debug(f"[CH{self.ch}] VMON={v_actual:.2f}V VSET={self.vset}V (elapsed={elapsed:.1f}s)")
 
             if status is None:
                 logger.warning(f"[CH{self.ch}] No se pudo leer estado, reintentando...")
@@ -188,33 +200,27 @@ class HVChannel:
                 self.turn_off()
                 return False
 
-            #if status.get("ovc") or i_actual > HVLimits.I_MAX:
-            #    logger.critical(
-            #        f"[CH{self.ch}] Sobrecorriente detectada ({i_actual:.3e}A)! Apagando..."
-            #    )
-            #    self.turn_off()
-            #    return False
-            
+            # Si está ramping, esperar más
             if status.get("ramping"):
                 time.sleep(0.5)
                 continue
 
+            # --------- Chequeo de VSET ---------
+            # Si está casi en VSET (dentro de tolerancia), OK
+            if abs(v_actual - self.vset) <= tolerance:
+                logger.info(f"[CH{self.ch}] ✅ VSET alcanzado: {v_actual:.2f}V (target={self.vset}V)")
+                return True
 
+            # Si voltaje excede máximo, FAULT
             if v_actual > HVLimits.V_MAX:
-                logger.critical(
-                    f"[CH{self.ch}] VMON {v_actual:.2f} V excede V_MAX {HVLimits.V_MAX} V"
-                )
+                logger.critical(f"[CH{self.ch}] VMON {v_actual:.2f}V excede V_MAX {HVLimits.V_MAX}V")
                 self.turn_off()
                 return False
-
-            # --------- Chequeo de VSET ---------
-            if v_actual >= (self.vset - tolerance):
-                return True
 
             time.sleep(0.5)
 
         # --------- Timeout ---------
-        logger.error(f"[CH{self.ch}] Timeout al alcanzar VSET (VMON={v_actual:.2f}V)")
+        logger.error(f"[CH{self.ch}] ⏱️ Timeout al alcanzar VSET (VMON={v_actual:.2f}V, esperado={self.vset}V)")
         return False
 
 

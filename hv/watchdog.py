@@ -66,13 +66,13 @@ class HVWatchdog:
 
     DV_DT_LIMIT = 200.0         # V/s (máxima velocidad de cambio)
     ENERGY_WINDOW = 5.0         # segundos
-    ENERGY_MAX = 0.5            # Joules acumulados en ventana
+    ENERGY_MAX = 0.6            # Joules acumulados en ventana
 
-    VMON_ZERO_THRESHOLD = 5.0   # voltios
+    VMON_ZERO_THRESHOLD = 10.0   # voltios
     VMON_ZERO_TIME = 2.0        # segundos
 
-    DRIFT_REL_TOL = 0.15        # 15% de tolerancia
-    DRIFT_TIME = 2.0            # segundos
+    DRIFT_REL_TOL = 0.10        # 15% de tolerancia
+    DRIFT_TIME = 3.0            # segundos
 
     def __init__(
         self,

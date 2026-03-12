@@ -1,4 +1,7 @@
- url=https://github.com/namelessushi/ConfCAENmodule/blob/main/hv/backend/base.py
+"""Base backend interface for HV backends.
+
+Source: https://github.com/namelessushi/ConfCAENmodule/blob/main/hv/backend/base.py
+"""
 from abc import ABC, abstractmethod
 
 class HVBackend(ABC):
