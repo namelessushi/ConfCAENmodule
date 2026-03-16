@@ -3,7 +3,7 @@
   "channels": {
     "0": {
       "state": "ON",
-      "vset": 1350.0,
+      "vset": 1250.0,
       "iset": 0.0001,
       "ramp_up": 25,
       "last_vmon": 1349.76,
