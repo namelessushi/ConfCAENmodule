@@ -3423,6 +3423,389 @@ git --version
 
 18 de Marzo de 2026, me pitié la CAEN. 
 
+\section{Incidente Crítico: Fallo del Módulo CAEN DT5533EN (18 de Marzo de 2026)}
+
+\subsection{Contexto Operacional}
+
+Durante las pruebas de integración del sistema de control HV, el módulo CAEN DT5533EN fue dañado irreversiblemente. El incidente evidencia una brecha crítica entre protecciones de software y validaciones operacionales en sistemas de alto voltaje.
+
+\subsection{Condiciones Previas}
+
+\begin{itemize}
+    \item Se disponía de un cable de alimentación SHV (Sub-miniature High Voltage) con daño físico intencional
+    \item El cable fue modificado por el operario: se realizó un corte transversal limpio con herramienta adecuada para adaptarlo a un conector JST de 2 pines
+    \item La resistencia del cable dañado fue medida post-incidente: \textbf{12.45 k\(\Omega\)} (persistente)
+    \item Al conectar este cable al módulo, el software GECO reportaba alarma persistente: \texttt{Overcurrent}
+    \item Se disponía de un cable SHV alternativo en buen estado (sin modificaciones)
+\end{itemize}
+
+\subsection{Hipótesis Inicial vs Realidad}
+
+La estrategia de diagnóstico fue:
+\begin{enumerate}
+    \item \textbf{Hipótesis}: El cable dañado causaba el disparo de \texttt{Overcurrent}
+    \item \textbf{Plan de validación}: Probar en CH1 y CH2 con parámetros validados por el repositorio (ISET $\leq$ 100\(\mu\)A)
+    \item \textbf{Resultado}: CH1 y CH2 operaron sin alarmas, confirmando que el cable era el origen
+\end{enumerate}
+
+Sin embargo, la prueba en CH3 divergió del protocolo establecido.
+
+\subsection{Cronología Detallada del Incidente}
+
+\subsubsection{Línea de Tiempo}
+
+\begin{itemize}
+    \item \textbf{$\approx$16:30}: Conexión inicial con cable SHV dañado (12.45 k\(\Omega\)), alarma \texttt{Overcurrent} persistente en módulo
+    \item \textbf{+5 min}: Reemplazo con cable SHV íntegro
+    \item \textbf{+10 min}: Prueba exitosa en CH1 y CH2 con ISET = 100\(\mu\)A (parámetros del repositorio)
+    \item \textbf{+15 min}: Decisión de probar CH3 utilizando GECO en lugar del código Python del repositorio
+    \item \textbf{+18 min}: Configuración en GECO: VSET = 300V, ISET = 3100\(\mu\)A (valor por defecto de GECO, no modificado por operario)
+    \item \textbf{+19 min}: Envío de comando \texttt{\$CMD:SET,CH:3,PAR:ISET,VAL:3100}
+    \item \textbf{+20 min}: Inicio de ramp-up, progresión de voltaje normal
+    \item \textbf{+21 min}: A aproximadamente 200V (67\% de VSET objetivo), \textbf{emisión visible de humo blanco} con olor característico a componentes quemados
+    \item \textbf{+22 min}: Operario ejecuta apagado inmediato de la fuente (power OFF)
+    \item \textbf{+23 min}: Intento de reinicio, módulo emite nuevo pico de humo, LEDs de polarización parpadean simultáneamente, HV2 reporta alarma \texttt{OVC}
+    \item \textbf{+25 min}: Módulo completamente sin respuesta
+\end{itemize}
+
+\textbf{Duración total del evento}: 25 minutos desde diagnóstico inicial hasta fallo catastrófico.
+
+\textbf{Duración del ramp-up}: $<$20 segundos (velocidad extremadamente rápida debido a baja impedancia de carga)
+
+\subsection{Secuencia de Eventos del Fallo}
+
+\subsubsection{Paso 1: Cambio de Protocolo de Validación}
+
+En lugar de utilizar el código Python del repositorio (que rechaza proactivamente ISET $>$ 100\(\mu\)A), se utilizó directamente el software \textbf{GECO} (interfaz oficial CAEN).
+
+Justificación en el momento: Validar que el módulo funcionaba correctamente después de reemplazar el cable dañado.
+
+Fallo: No se verificó que GECO permite parámetros potencialmente peligrosos sin validación.
+
+\subsubsection{Paso 2: Parámetros Críticos en CH3}
+
+\begin{itemize}
+    \item \textbf{ISET enviado vía GECO}: 3100\(\mu\)A (valor \textbf{por defecto} en GECO, no modificado por operario)
+    \item \textbf{Límite CAEN especificación (DT5533E)}: 3000\(\mu\)A máximo por canal (ver tabla técnica, pág. 9 del manual)
+    \item \textbf{Límite repositorio (validación aplicada)}: 100\(\mu\)A como derating de seguridad (33× menor)
+    \item \textbf{Ratio de sobrecarga respecto a código seguro}: \(\frac{3100}{100} = 31\times\)
+    \item \textbf{Incumplimiento de especificación CAEN}: 3100\(\mu\)A $>$ 3000\(\mu\)A (exceso de 100\(\mu\)A = 3.3\%)
+    \item \textbf{VSET}: 300V (dentro de especificación, módulo rango 0-4100V)
+    \item \textbf{Ramp-up}: Velocidad nominal (no fue limitada explícitamente)
+\end{itemize}
+
+\subsubsection{Paso 3: Inicio del Fallo}
+
+Al enviar el comando a CH3:
+\begin{verbatim}
+$CMD:SET,CH:3,PAR:ISET,VAL:3100
+\end{verbatim}
+
+El módulo aceptó el parámetro sin rechazo y comenzó a elevar el voltaje progresivamente según el ramp configurado.
+
+GECO \textbf{no emitió advertencia} previo al envío del comando.
+
+GECO \textbf{no validó} que ISET = 3100\(\mu\)A excedía la especificación.
+
+\subsubsection{Paso 4: Manifestación Física del Fallo}
+
+\begin{itemize}
+    \item A aproximadamente \textbf{200V} (equivalente a 67\% del VSET objetivo):
+    \begin{itemize}
+        \item Emisión visible de \textbf{humo blanco denso} desde el módulo
+        \item Olor característico a \textbf{componentes electrónicos quemados} (resina epoxi, semiconductores)
+        \item Los ventiladores internos estaban operativos y disipaban el humo hacia afuera
+        \item No hubo decoloración visible de la carcasa externa (disipación fue parcialmente efectiva)
+    \end{itemize}
+    \item La \textbf{tasa de elevación de voltaje no se detuvo automáticamente}
+    \item El módulo continuó intentando suministrar corriente en la región de sobrecarga
+    \item El operario apagó la fuente inmediatamente (acción defensiva correcta)
+\end{itemize}
+
+\subsubsection{Paso 5: Estado Final del Módulo}
+
+\begin{itemize}
+    \item El módulo CAEN DT5533EN dejó de responder completamente a comandos
+    \item No se pudo establecer comunicación mediante:
+    \begin{itemize}
+        \item GECO (no detecta dispositivo)
+        \item minicom / terminal serial (sin respuesta a ``caen'')
+        \item Intento de reinicio: emisión de humo adicional + parpadeo anómalo de LEDs
+    \end{itemize}
+    \item HV2 mostró alarma persistente: \texttt{OVC} (Overcurrent)
+    \item Se presume daño interno irreversible en:
+    \begin{itemize}
+        \item Etapas reguladoras de voltaje
+        \item Transistores de potencia (salida)
+        \item Posiblemente PCB carbonizada en zona de máxima disipación
+    \end{itemize}
+\end{itemize}
+
+\subsection{Análisis Energético del Fallo}
+
+\subsubsection{Cálculo de Potencia Instantánea}
+
+En el punto de fallo (200V, 3100\(\mu\)A):
+
+\[
+P = V \times I = 200\,\text{V} \times 3100\,\mu\text{A} = 200 \times 3.1 \times 10^{-3} = 0.62\,\text{W}
+\]
+
+Esta potencia se disipa \textbf{dentro} de la etapa de potencia del módulo, no en la carga.
+
+\subsubsection{Energía Acumulada Durante Ramp}
+
+Asumiendo ramp lineal con duración \(\Delta t \approx 20\) segundos (observado):
+
+\[
+E = P_{\text{promedio}} \times t = \frac{0.62\,\text{W}}{2} \times 20\,\text{s} \approx 6.2\,\text{J}
+\]
+
+(Factor 1/2 porque la potencia crece linealmente con el voltaje durante ramp)
+
+Este nivel de energía genera temperatura insostenible en componentes de potencia sin disipadores activos dimensionados para este régimen.
+
+\subsubsection{Comparativa con Operación Nominal (Segura)}
+
+En operación segura, usando parámetros del repositorio (100\(\mu\)A, 300V):
+
+\[
+P_{\text{seguro}} = 300\,\text{V} \times 100\,\mu\text{A} = 30\,\text{mW}
+\]
+
+Relación de sobrecarga térmica:
+
+\[
+\frac{P_{\text{fallo}}}{P_{\text{seguro}}} = \frac{620\,\text{mW}}{30\,\text{mW}} \approx 20.7\times
+\]
+
+La potencia disipada fue \textbf{más de 20 veces superior} a la operación nominal, provocando degradación rápida del aislamiento y cortocircuito interno.
+
+\subsection{Inspección Visual Post-Fallo}
+
+\begin{itemize}
+    \item \textbf{Carcasa externa}: Aspecto normal, sin decoloración visible (ventiladores disiparon humo)
+    \item \textbf{Puertos de entrada}: Intactos, sin quemaduras o corrosión
+    \item \textbf{Conectores SHV}: En buen estado, sin daño mecánico
+    \item \textbf{LEDs frontales}: No responden a intentos de reinicio (posible fallo de microcontrolador)
+    \item \textbf{Olor persistente}: Característico a componentes quemados (resina, semiconductores)
+    \item \textbf{Interior (no abierto por riesgo de daño post-mortem)}: 
+    \begin{itemize}
+        \item Olor muy intenso de quemado proveniente de los puertos de ventilación
+        \item Posible carbonización de PCB detectada por olor (componentes cerámicos frecuentemente crepitan cuando se queman)
+    \end{itemize}
+\end{itemize}
+
+\textbf{Conclusión visual}: Daño concentrado en región de etapa de potencia (reguladores, transistores de salida), consistente con sobrecarga térmica sostenida.
+
+\subsection{Validación Retrospectiva contra Especificación CAEN}
+
+Revisión de manual CAEN DT5533EN post-incidente (Rev. 15 - 20 Febrero 2026):
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{|l|c|c|c|l|}
+        \hline
+        \textbf{Parámetro} & \textbf{Especificación} & \textbf{Usado} & \textbf{Estado} & \textbf{Referencia} \\
+        \hline
+        \hline
+        IMAX (DT5533E) & 3000\(\mu\)A & 3100\(\mu\)A & ❌ EXCEDIDO & Tabla p.9 \\
+        IMAX potencia máx. (derating 70\%) & 2100\(\mu\)A & 3100\(\mu\)A & ❌ PELIGROSO & Recomendado \\
+        VSET máximo & 4000V & 300V & ✅ Ok & Tabla p.9 \\
+        Potencia máxima canal & 4W & 0.62W @ 200V & ✅ Ok & Tabla p.9 \\
+        Protección interna TRIP & Configurable & No activada & ❌ Inefectiva & § 4, p.14 \\
+        \hline
+    \end{tabular}
+    \caption{Validación contra especificaciones CAEN}
+\end{table}
+
+\textbf{Conclusión}: El incidente ocurrió con parámetros \textbf{inherentemente fuera de especificación} (3100\(\mu\)A $>$ 3000\(\mu\)A según manual) \textbf{incluso sin contar el daño del cable}.
+
+\subsection{Análisis de Causa Raíz (RCA)}
+
+\subsubsection{Factor Primario: Brecha de Protección de Software}
+
+GECO es software oficial del fabricante que \textbf{no implementa validaciones por modelo específico}. Sus limitaciones documentadas:
+
+\begin{itemize}
+    \item No verifica límites físicos del módulo (IMAX) contra parámetros ingresados
+    \item No implementa derating de seguridad (margen operacional recomendado)
+    \item Asume completamente que el operario es responsable de cumplir especificaciones
+    \item No contiene lógica para detectar cables defectuosos o mal adaptados
+    \item \textbf{No emite advertencias previo al envío de comandos peligrosos}
+    \item Permite parámetros por defecto potencialmente inseguros (ISET = 3100\(\mu\)A preestablecido)
+\end{itemize}
+
+En contraste, el código Python del repositorio \textbf{rechaza proactivamente} valores de ISET $>$ 100\(\mu\)A:
+
+\begin{lstlisting}
+# hv/safety.py
+def check_user_params(vset, iset):
+    if iset > self.I_MAX:  # I_MAX = 100e-6 A
+        raise HVSafetyError(f"ISET inválido: {iset} A")
+\end{lstlisting}
+
+\textbf{Esta validación habría prevenido completamente el incidente}.
+
+\subsubsection{Factor Secundario: Cable Dañado como Factor Precipitante}
+
+El cable SHV modificado (12.45 k\(\Omega\)) actuó como factor precipitante:
+
+\begin{itemize}
+    \item Inicialmente causó alarma de \texttt{Overcurrent} legítima (impedancia muy elevada)
+    \item Su reemplazo por cable íntegro pareció resolver completamente el problema
+    \item Esto creó falsa confianza en la integridad del sistema
+    \item No se realizó validación exhaustiva del estado del cable antes de pruebas de alta potencia
+    \item El corte transversal limpio (adaptación JST) no fue documentado como ``cable experimental''
+\end{itemize}
+
+El cable dañado no fue la causa raíz, pero facilitó el incidente al generar confianza prematura.
+
+\subsubsection{Factor Terciario: Protocolo de Testing Insuficiente}
+
+La validación en CH1 y CH2 fue \textbf{parcial pero no exhaustiva}:
+
+\begin{itemize}
+    \item Se validó que el cable nuevo funcionaba (correcto)
+    \item Se usaron parámetros seguros (100\(\mu\)A) para validación (correcto)
+    \item \textbf{Sin embargo}, se saltó la validación de CH3 con parámetros seguros antes de usar GECO
+    \item No se verificó que GECO usaba valor por defecto de 3100\(\mu\)A
+    \item No se escaló gradualmente: debería haber sido 100\(\mu\)A $\rightarrow$ 500\(\mu\)A $\rightarrow$ 1000\(\mu\)A $\rightarrow$ 3100\(\mu\)A (con validación en cada paso)
+\end{itemize}
+
+\subsubsection{Factor Cuaternario: Falta de Jerarquía de Protecciones}
+
+El sistema carecía de múltiples capas de defensa coordinadas:
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{|c|c|c|l|}
+        \hline
+        \textbf{Capa} & \textbf{Situación Ideal} & \textbf{Estado Real} & \textbf{Responsable} \\
+        \hline
+        \hline
+        Software & Validación de parámetros & ❌ (GECO sin validación) & Fabricante CAEN \\
+        Firmware & Límites internos del módulo & ❌ (permitió 3100\(\mu\)A) & Fabricante CAEN \\
+        Hardware & Fusibles/protecciones térmicas & ? (aparentemente superadas) & Fabricante CAEN \\
+        Operacional & Protocolo de testing riguroso & ❌ (protocol insuficiente) & Operario \\
+        Supervisión & Watchdog de sobrecorriente & ❌ (no implementado) & Operario \\
+        \hline
+    \end{tabular}
+    \caption{Jerarquía de protecciones (análisis post-mortem)}
+\end{table}
+
+El fallo cascada: Sin validación en software $\rightarrow$ confianza en firmware $\rightarrow$ firmware no detecta sobrecarga $\rightarrow$ protecciones hardware insuficientes $\rightarrow$ daño.
+
+\subsection{Diferencias entre GECO y Código del Repositorio}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{|l|c|c|}
+        \hline
+        \textbf{Característica} & \textbf{GECO} & \textbf{Repositorio} \\
+        \hline
+        \hline
+        Validación de ISET & ❌ No & ✅ Sí (I\_MAX = 100\(\mu\)A) \\
+        Validación de VSET & ❌ No & ✅ Sí (V\_MAX = 1500V) \\
+        Validación de potencia & ❌ No & ✅ Sí (P\_MAX\_CH = 4W) \\
+        Derating de seguridad & ❌ No & ✅ Sí (100\(\mu\)A = 33× menos que 3100) \\
+        Rechazo proactivo & ❌ No & ✅ Sí (lanza excepciones) \\
+        Advertencias pre-envío & ❌ No & ✅ Sí (impide ejecución) \\
+        Parámetro por defecto & 3100\(\mu\)A (peligroso) & 100\(\mu\)A (seguro) & \\
+        Responsabilidad & Operario (confía en usuario) & Sistema (desconfia del usuario) & \\
+        \hline
+    \end{tabular}
+    \caption{Comparativa de estrategias de validación}
+\end{table}
+
+El código del repositorio implementa \textbf{defensa en profundidad}; GECO implementa \textbf{confianza total en el operario}.
+
+\subsection{Recomendaciones Preventivas}
+
+\subsubsection{Nivel 1: Protocolo de Validación Pre-Operacional}
+
+\begin{itemize}
+    \item \textbf{Siempre} utilizar el código Python del repositorio para pruebas críticas
+    \item GECO debe reservarse \textbf{únicamente} para diagnóstico de conectividad (sin encender HV)
+    \item Inspeccionar visualmente los cables antes de cualquier prueba (buscar daño, adaptaciones improvisadas)
+    \item Descartar cables con daños visibles (cuts, pelado, quemaduras previas, conexiones débiles)
+    \item Medir resistencia de cables con multímetro \textbf{antes} de cualquier uso en HV
+    \item Documentar cualquier modificación realizada a cables (ej: adaptación JST) con etiqueta/descripción
+    \item Validación escalonada: 0V $\rightarrow$ 50V $\rightarrow$ 100V $\rightarrow$ 300V, con verificación de IMON en cada paso
+\end{itemize}
+
+\subsubsection{Nivel 2: Protecciones de Software}
+
+\begin{itemize}
+    \item Mantener \texttt{safety.py} actualizado con especificaciones del hardware
+    \item Implementar alarma de transición anómala: si \(dV/dt > 200\) V/s, apagar automáticamente
+    \item Agregar watchdog que interrumpa si \(|V_{\text{MON}} - V_{\text{SET}}| > 5\%\) por tiempo sostenido
+    \item Logging exhaustivo de \textbf{todos} los comandos enviados (incluir timestamp, parámetros, respuesta)
+    \item Implementar límite de energía: si potencia acumulada supera 10J en ventana de 5s, apagar
+    \item Rechazar ISET $>$ derating recomendado (70\% de IMAX) de forma implícita en software
+\end{itemize}
+
+\subsubsection{Nivel 3: Protocolo Operacional}
+
+\begin{itemize}
+    \item Proceder por escaleras de voltaje: 0V → 50V → 100V → 300V → VSET, con espera de 10s entre escalones
+    \item Monitorear corriente en tiempo real durante ramp (si es posible via IMON continuo)
+    \item Detener inmediatamente si IMON $>$ 110\% de ISET configurado
+    \item Nunca ignorar alarmas de software, incluso si parecen ``falsas'' o ``de ajuste''
+    \item Documentar cada sesión de prueba: hora, parámetros, observaciones, resultado
+    \item Nunca modificar cables sin documentación clara y prueba de continuidad post-modificación
+    \item Usar código Python (repositorio) como \textbf{única} interfaz de control en producción experimental
+\end{itemize}
+
+\subsubsection{Nivel 4: Consideraciones de Hardware Futuro}
+
+\begin{itemize}
+    \item Utilizar cables SHV blindados con conectores certificados (evitar adaptaciones improvisadas)
+    \item Implementar fusible rápido en línea de alimentación del HV OUT (basado en IMAX esperado del detector)
+    \item Si es posible, solicitar a CAEN información de sensores de temperatura internos (no disponible en DT5533EN)
+    \item Considerar limitador de corriente en hardware como medida final (fuera del alcance actual)
+    \item Integración futura con Arduino como supervisor independiente:
+    \begin{itemize}
+        \item Monitoreo de línea de habilitación HV via GPIO
+        \item Implementar watchdog timer independiente (no afectado por congelamiento de software)
+        \item Corte físico de alimentación si no recibe heartbeat del Raspberry en 3 segundos
+        \item Registro en EEPROM de cada evento de corte para auditoría post-incidente
+    \end{itemize}
+\end{itemize}
+
+\subsection{Conclusión del Incidente}
+
+El fallo del módulo CAEN DT5533EN fue \textbf{prevenible en múltiples puntos de la cadena}:
+
+\begin{enumerate}
+    \item \textbf{Punto 1}: Rechazando ISET > 100\(\mu\)A \textbf{en código} (no fue usado: se eligió GECO)
+    \item \textbf{Punto 2}: Validando integridad de cables \textbf{antes} de pruebas (no se hizo rigurosamente)
+    \item \textbf{Punto 3}: Escalando voltaje \textbf{progresivamente} en pasos (no se hizo: se fue directo a 300V)
+    \item \textbf{Punto 4}: Monitoreando IMON \textbf{durante ramp} (no se implementó)
+    \item \textbf{Punto 5}: Verificando especificación CAEN (3000\(\mu\)A max) \textbf{antes} de enviar comando (no se hizo)
+\end{enumerate}
+
+\textbf{Lección principal}: Un software sin protecciones (GECO) más confianza del operario en parámetros por defecto = fallo inevitable en sistemas de alto voltaje.
+
+\textbf{Reformulación de protocolos para futuras iteraciones}:
+\begin{itemize}
+    \item El código Python \textbf{debe ser la única} interfaz de control en producción
+    \item GECO se limita a diagnóstico de conectividad (``¿está el módulo respondiendo?''), nunca a control
+    \item Toda prueba de hardware nuevo \textbf{debe comenzar a 0V} y escalar gradualmente
+    \item Validar especificación \textbf{antes} de escribir código, no después
+\end{itemize}
+
+\subsection{Estado Actual del Sistema}
+
+\begin{itemize}
+    \item El módulo CAEN DT5533EN está \textbf{completamente no funcional}
+    \item No hay cobertura de seguro del equipo
+    \item Se aguarda retroalimentación del supervisor académico para determinar próximos pasos (reparación, reemplazo, análisis forense)
+    \item El código del repositorio \textbf{validaría correctamente} este escenario y habría prevenido el fallo
+    \item La Raspberry Pi y el código de control Python permanecen completamente íntegros y operativos
+    \item Se planea implementar supervisión con Arduino como medida adicional de seguridad
+\end{itemize}
+
 \end{document}
 
 
