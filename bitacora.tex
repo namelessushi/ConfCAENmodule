@@ -1,0 +1,3428 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{url}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{tikz}
+\usepackage{circuitikz}
+\usepackage{forest}
+\usepackage{dirtree}
+
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{setspace}
+
+\usetikzlibrary{arrows.meta}
+
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    frame=single,
+    breaklines=true,
+    numbers=left,
+    numberstyle=\tiny,
+    captionpos=b,
+    showstringspaces=false
+}
+
+\title{Bitácora Módulo CAEN DT5533EN}
+\author{Ignacio Alonso Pinto Pinto}
+\date{January 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+El presente trabajo documenta el proceso de implementación de un sistema de control para el módulo de alto voltaje CAEN DT5533EN utilizando una Raspberry Pi 5 como plataforma embebida. El objetivo no fue únicamente lograr comunicación con el hardware, sino desarrollar una arquitectura de control robusta, reproducible y desacoplada del software propietario de demostración provisto por el fabricante.\\
+
+Como entorno base se instaló AlmaLinux 9 en una Raspberry Pi 5, empleando la imagen oficial disponible en los repositorios compatibles con arquitectura ARM y grabándola en una tarjeta microSD de 32\,GB mediante \textit{Raspberry Pi Imager}. Esta elección respondió a la necesidad de contar con un sistema estable, cercano a entornos científicos estándar (RHEL-like), y compatible con las bibliotecas distribuidas por CAEN.\\
+
+La integración con el módulo CAEN DT5533EN requirió un análisis detallado de su documentación técnica, especialmente del manual del fabricante y de las especificaciones del protocolo de comunicación. Sin embargo, la implementación práctica reveló que múltiples aspectos operativos —como secuencias de inicialización, formatos de respuesta y gestión de errores— no se encontraban completamente descritos o exigían adaptaciones específicas no evidentes en la documentación oficial.\\
+
+Tras la instalación de las bibliotecas proporcionadas por CAEN y la correcta configuración del sistema, se estableció la comunicación vía USB con la Raspberry Pi, verificando la conectividad mediante herramientas de sistema y comandos directos, en lugar de utilizar el software de demostración incluido por defecto. Esta decisión permitió validar la capa de comunicación de manera independiente y controlada.\\
+
+Inicialmente, se tomó como referencia un repositorio desarrollado por Sebastián Infante, el cual contenía una implementación preliminar en Python para el control del módulo. Si bien dicho código constituyó un punto de partida valioso, presentaba inconsistencias en la interpretación de respuestas del dispositivo, conversiones incorrectas de tipos (particularmente en la transformación de cadenas a valores numéricos) y comandos incompatibles con la versión actual del firmware.\\
+
+Actualmente, se dispone de una versión funcional y estructurada del código en Python, desarrollada y depurada específicamente para este sistema. A partir de esta base, se construirá un repositorio propio que formalice la arquitectura implementada, incluyendo control de estados, supervisión activa, persistencia y políticas de seguridad. Este repositorio no pretende ser únicamente un controlador del módulo, sino un marco de trabajo reproducible para la operación segura de detectores basados en fotomultiplicadores.\\
+
+En consecuencia, este documento no se limita a describir una instalación técnica, sino que expone el diseño de una infraestructura de control experimental orientada a robustez, trazabilidad y seguridad operacional.\\
+
+
+
+\section{Instalación del OS AlmaLinux9 en unidad microSD}
+\subsection{Descarga de la imagen}
+Como primer paso, se accede a: \url{https://wiki.almalinux.org/documentation/raspberry-pi.html#tested-models}. Dentro de esta página nos dirigimos a Installation Steps y entramos a aquel link que nos lleva a un repositorio con las imagenes de AlmaLinux, vendrá como \texttt{ALMALINUX OS 9}.\\
+
+Ya dentro, descargamos la siguiente imagen: \newline
+\texttt{AlmaLinux-9-RaspberryPi-gpt-latest.aarch64.raw.xz}. Se seleccionó la imagen GPT debido a su esquema de particionado moderno, que permite mejor manejo de volúmenes y compatibilidad con sistemas UEFI. \\
+
+\textbf{NOTA:} No buscamos instalar imagenes con entornos gráficos. Por ende cualquier extensión GNOME queda descartada.\\
+
+Se optó por una instalación sin entorno gráfico para reducir consumo de recursos, minimizar superficie de fallo y mantener el sistema orientado a operación headless.\\
+
+
+\subsection{Uso de la herramienta RaspeberryPiImager}
+
+En \url{https://www.raspberrypi.com/software/}, está el ejecutable para usar \texttt{Raspberry Pi Imager}, para este caso se hizo el flasheo en un OS Windows.
+Dentro del ejecutable lo primero que se nos pedirá será especificar en que dispositivo queremos instalar el OS, esta vez usamos una Raspberry Pi 5.\\
+
+La elección del OS es manual así que escogemos "Custom", se abrirá una ventana del File Explorer, la idea es escoger la imagen de AlmaLinux9 descargada en la sección previa.\\
+
+Seleccionamos unidad de almacenamiento (microSD), y esperamos mientras se crea la imagen booteable. \\
+
+El proceso es prácticamente automático así que una vez finalizado retiramos la microSD y la insertamos en la Raspberry Pi 5.
+
+\textbf{NOTA:} Se debe insertar la SD en la Raspberry apagada, ya que se debe llevar a cabo un primer booteo que nos mostrará que efectivamente el sistema operativo responde. 
+
+\section{Conexiones mínimas}
+
+Notar que los puertos de la Raspberry son específicos. En el kit de la Raspberry viene el cable de alimentación pero el resto de conexiones no. Ahora para poder tener acceso directo a la terminal (ver la terminal) necesitamos además un adaptador microHDMI-HDMI2.0 o bien en su defecto el cable con cada uno en los extremos.\\
+A posteriori, evidentemente podemos tener acceso a la Raspberry vía ssh. (Cable Ethernet). La configuración de acceso remoto vía SSH no se detalla en este documento, ya que se considera un procedimiento estándar ampliamente documentado.\\
+
+
+\section{Instalación de librerías CAEN}
+
+Para llevar a cabo el control del módulo debemos previamente instalar algunas librerías de CAEN disponibles en: \url{https://www.caen.it/download/}\\
+En el buscador de esa URL, nos centraremos principalmente en tres paquetes:
+\begin{itemize}
+    \item CAEN HV Wrapper Library. 
+    \item CAENComm Library.
+    \item CAENVMELib Library.
+\end{itemize}
+Para todas estas, está de más decir que descargamos la extensión Linux. La copiamos en root (para entrar a root en la Raspberry con AlmaLinux 9 ejecutar el comando: \texttt{sudo -i}). Y los descomprimimos.\\
+
+Al descomprimir cada archivo, se recomienda revisar los archivos \texttt{README.txt}, para hacer correctamente la instalación de las tres librerías. El procedimiento es inmediato, no hay ningún paso intermedio por lo que no se indagará en posibles errores.\\
+
+
+\section{Conexión vía PyVisa para conexión Raspberry-CAEN DT5533EN}
+
+
+\subsection{Inicialización y conexión}
+
+En primer lugar para establecer la conexión vía USB en la consola de la raspberry debemos ejecutar: 
+\texttt{sudo dnf install usbutils -y}
+Esto, en resumen instala unas librerías de la cuales obtendremos el comando \texttt{lsusb}, con este sabremos si el módulo CAEN hizo conexión directa con la Raspberry apenas se conectó. Por lo que en consola aparecerá una lista de los puertos usados, entre ellos se verá el módulo CAEN.\\
+
+\section{Acceso al módulo mediante minicom}
+
+Una vez conectado el módulo CAEN DT55xxE a la Raspberry Pi mediante el cable USB tipo B, el sistema lo reconoce como un dispositivo serie virtual (por ejemplo \texttt{/dev/ttyACM0}).
+
+\subsection{Verificación del dispositivo USB}
+
+Antes de abrir la comunicación, es recomendable verificar que el sistema detecta correctamente el módulo:
+
+\begin{verbatim}
+lsusb
+\end{verbatim}
+
+Y posteriormente:
+
+\begin{verbatim}
+ls /dev/ttyACM*
+\end{verbatim}
+
+Si la conexión es correcta, deberá aparecer algo como:
+
+\begin{verbatim}
+/dev/ttyACM0
+\end{verbatim}
+
+\subsection{Instalación de minicom}
+
+Si \texttt{minicom} no está instalado, se puede instalar mediante:
+
+\begin{verbatim}
+sudo dnf install minicom -y
+\end{verbatim}
+
+No es necesario estar en sesión root permanente; basta con utilizar \texttt{sudo}.
+
+\subsection{Apertura de la comunicación serie}
+
+Para iniciar la comunicación con los parámetros especificados por CAEN (baudrate 9600, 8N1, sin control de flujo), se ejecuta:
+
+\begin{verbatim}
+minicom -D /dev/ttyACM0 -b 9600
+\end{verbatim}
+
+Donde:
+
+\begin{itemize}
+    \item \texttt{-D /dev/ttyACM0} especifica el dispositivo serie.
+    \item \texttt{-b 9600} establece el baud rate.
+\end{itemize}
+
+\subsection{Parámetros de comunicación requeridos}
+
+Según la documentación del módulo, la configuración debe ser:
+
+\begin{itemize}
+    \item Baud rate: 9600
+    \item Data bits: 8
+    \item Parity: None
+    \item Stop bits: 1
+    \item Flow control: None
+\end{itemize}
+
+Si se desea configurar manualmente estos parámetros dentro de \texttt{minicom}, se puede ejecutar:
+
+\begin{verbatim}
+sudo minicom -s
+\end{verbatim}
+
+Luego:
+
+\begin{itemize}
+    \item Serial port setup
+    \item Establecer \texttt{/dev/ttyACM0}
+    \item Configurar 9600 8N1
+    \item Desactivar Hardware y Software Flow Control
+\end{itemize}
+
+Guardar la configuración y salir.
+
+\subsection{Inicio de sesión con el módulo}
+
+Una vez establecida la conexión, se debe escribir:
+
+\begin{verbatim}
+caen
+\end{verbatim}
+
+y presionar \texttt{Enter}.
+
+Si el firmware está presente y funcional, aparecerá el menú principal del módulo (Main Menu), desde donde se puede acceder a:
+
+\begin{itemize}
+    \item Display (D)
+    \item Format (F)
+    \item Update (U)
+    \item Ethernet (E)
+    \item Quit (Q)
+\end{itemize}
+
+En caso de que el firmware haya sido borrado previamente, el sistema quedará en modo de espera para carga de firmware y mostrará mensajes como:
+
+\begin{verbatim}
+Erasing Flash Memory...
+Flash Erased!!!
+Send file to upload
+\end{verbatim}
+
+lo que indica que el módulo está en modo bootloader.
+
+En caso de que ocurra la situación anterior, se recomienda seguir el siguiente apartado:
+
+\section{Recuperación y Actualización de Firmware}
+\label{sec:fw_update_dt5533en}
+
+\subsection{Identificación del Equipo}
+
+\begin{itemize}
+    \item Fabricante: CAEN S.p.A.
+    \item Modelo: DT5533EN
+    \item Serie: DT55XXE
+    \item Tipo: 4-Channel HV Power Supply Module
+    \item Firmware objetivo: \texttt{DT55XXE.113}
+\end{itemize}
+
+\subsection{Contexto Operacional}
+
+El módulo fue utilizado en un entorno de adquisición experimental
+con control mediante \texttt{pyVISA} y herramientas sugeridas en la documentación
+oficial del fabricante.
+
+Durante la interacción vía terminal serial, se activó el modo
+de actualización de firmware (tecla \texttt{U}),
+lo que inició el borrado de la memoria Flash
+sin disponer inicialmente del archivo correspondiente.
+
+\subsection{Advertencia de Seguridad}
+
+El módulo corresponde a una fuente de alto voltaje (HV).
+Antes de cualquier procedimiento de firmware se debe:
+
+\begin{itemize}
+    \item Asegurar que todos los canales estén deshabilitados.
+    \item Confirmar que no exista carga conectada.
+    \item Verificar estado seguro del sistema experimental.
+\end{itemize}
+
+
+\subsection{Síntomas Observados}
+
+Tras el borrado de la memoria:
+
+\begin{itemize}
+    \item Mensaje persistente:
+\begin{verbatim}
+!!! Checksum Error
+Firmware Update...press any key to start
+\end{verbatim}
+    \item Ausencia de arranque normal del firmware.
+    \item No respuesta a comandos de control estándar.
+    \item Fallos repetidos en transferencia por XMODEM.
+\end{itemize}
+
+
+
+\subsection{Diagnóstico Técnico}
+
+Se determinó que:
+
+\begin{enumerate}
+    \item El bootloader permanecía operativo.
+    \item La transferencia fallaba debido a:
+    \begin{itemize}
+        \item Uso incorrecto de baudrate.
+        \item Ausencia del driver específico en Windows.
+        \item Intentos de transferencia mediante protocolos no compatibles.
+    \end{itemize}
+\end{enumerate}
+
+El bootloader del módulo opera exclusivamente a:
+
+\begin{center}
+\textbf{9600 baud, 8N1, sin control de flujo}
+\end{center}
+
+Cualquier otra configuración impide la transferencia válida del firmware.
+
+\subsection{Interpretación Técnica del Error}
+
+El mensaje persistente:
+
+\begin{verbatim}
+!!! Checksum Error
+\end{verbatim}
+
+indica que el firmware principal no está presente o no coincide con
+la verificación de integridad realizada por el bootloader.
+Esto confirma que el microcontrolador permanece operativo,
+pero la memoria Flash carece de una imagen válida.
+
+
+\subsection{Entorno de Recuperación Validado}
+
+\begin{itemize}
+    \item Sistema Operativo: Windows
+    \item Driver: CAEN USB Serial Driver instalado correctamente
+    \item Software de terminal: Tera Term
+    \item Puerto: COM asignado por Device Manager
+\end{itemize}
+
+\subsection{Procedimiento Correcto de Actualización}
+
+\begin{enumerate}
+    \item Instalar driver oficial CAEN para interfaz USB.
+    \item Verificar puerto COM en Device Manager.
+    \item Abrir Tera Term con configuración:
+    \begin{itemize}
+        \item Baudrate: 9600
+        \item Data bits: 8
+        \item Paridad: None
+        \item Stop bits: 1
+        \item Flow control: None
+    \end{itemize}
+    \item Esperar mensaje de bootloader.
+    \item Seleccionar:
+    \begin{center}
+    \texttt{File $\rightarrow$ Send File}
+    \end{center}
+    \item Configurar:
+    \begin{itemize}
+        \item Serial transmit delay: 1 ms/line
+        \item Modo: Sequential
+    \end{itemize}
+    \item Enviar archivo \texttt{DT55XXE.113}.
+    \item Esperar finalización de transferencia.
+    \item Reiniciar manualmente el módulo.
+\end{enumerate}
+
+\subsection{Resultado}
+
+\begin{itemize}
+    \item Firmware cargado correctamente.
+    \item Arranque normal restaurado.
+    \item Comunicación funcional mediante software CAEN y \texttt{pyVISA}.
+\end{itemize}
+
+\subsection{Análisis de Causa Raíz}
+
+\begin{itemize}
+    \item Activación accidental del modo de actualización.
+    \item Ausencia inicial del archivo de firmware.
+    \item Falta de driver adecuado en el entorno Windows.
+    \item Uso de baudrate incorrecto durante intentos iniciales.
+\end{itemize}
+
+\subsection*{Recomendaciones Preventivas}
+
+\begin{itemize}
+    \item No iniciar modo de actualización sin disponer del firmware correspondiente.
+    \item Verificar siempre la velocidad del bootloader (9600 baud).
+    \item Confirmar instalación de drivers antes de transferencia.
+    \item Documentar cualquier intervención en firmware.
+\end{itemize}
+
+\subsection{Verificación Posterior a la Actualización}
+
+Tras el reinicio, se debe verificar:
+
+\begin{enumerate}
+    \item Aparición del menú principal.
+    \item Ausencia de mensajes de \texttt{Checksum Error}.
+    \item Correcta respuesta al comando:
+\begin{verbatim}
+caen
+\end{verbatim}
+    \item Establecimiento de comunicación mediante CAENHVWrapper o pyVISA.
+\end{enumerate}
+
+\section{CONSIDERACIONES}
+
+El protocolo vía minicom/TeraTerm, se reitera es el utilizado por el protocolo de la documentación, dentro de este contexto la idea es poder usarlo vía pyVISA, esto tiene ventajas convenientes dentro del proyecto, puesto que en caso de que deseemos utilizar otro modelo CAEN, solo bastará consultar el protocolo de comunicación relativo a ese modelo y crear un backend para ese módulo, para finalmente echar a andar el \texttt{hv\_run.py}.\\
+
+A continuación se adjunta el protocolo de comunicación específico para los modelos \texttt{DT55XXE}, en específico para el \texttt{DT5533E}
+
+\section{Comunicación básica con la fuente}
+
+\subsection{Envío de comandos}
+
+El método de escritura envía comandos de texto directamente a la fuente HV.  
+Ejemplo general de comando:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:\emph{X},VAL:\emph{Y}}}
+\end{quote}
+
+El efecto físico depende completamente del comando enviado.
+
+\subsection{Lectura de parámetros}
+
+Los comandos de lectura tienen la forma:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:MON,CH:\emph{n},PAR:\emph{X}}}
+\end{quote}
+
+Estos comandos:
+\begin{itemize}
+    \item No alteran el estado del HV.
+    \item Devuelven valores medidos internamente por la fuente.
+\end{itemize}
+
+\subsection{Limpieza de alarmas (Trip)}
+
+Para borrar estados de protección o fallo se utiliza el comando:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,PAR:BDCLR}}
+\end{quote}
+
+Efectos físicos:
+\begin{itemize}
+    \item Elimina el estado de \emph{trip}.
+    \item No enciende el HV.
+    \item No modifica el voltaje configurado.
+\end{itemize}
+
+\subsection{Configuración de un canal}
+
+La configuración de un canal HV se realiza enviando una secuencia de comandos antes de encender el alto voltaje.
+
+\subsubsection{Voltaje objetivo}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:VSET,VAL:\emph{V}}}
+\end{quote}
+
+Define el voltaje final al que el canal intentará llegar una vez encendido.
+
+\subsubsection{Límite de corriente}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:ISET,VAL:\emph{I}}}
+\end{quote}
+
+Establece la corriente máxima permitida antes de que la fuente dispare un \emph{trip}.  
+Este parámetro protege directamente al detector.
+
+\subsubsection{Ramp up (subida de voltaje)}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:RUP,VAL:\emph{R}}}
+\end{quote}
+
+Controla la velocidad de subida del alto voltaje, evitando transitorios bruscos.
+
+\subsubsection{Ramp down (bajada de voltaje)}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:RDW,VAL:\emph{R}}}
+\end{quote}
+
+Controla la velocidad de apagado del HV.
+
+\subsubsection{Tiempo de trip}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:TRIP,VAL:\emph{t}}}
+\end{quote}
+
+Define el tiempo permitido de sobrecorriente antes de disparar la protección.
+
+\subsubsection{Rango de monitoreo de corriente}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:IMRANGE,VAL:HIGH/LOW}}
+\end{quote}
+
+Selecciona el rango de medición de corriente, siendo \texttt{LOW} el adecuado para PMTs.
+
+\subsubsection{Modo de apagado}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:PDWN,VAL:KILL/RAMP}}
+\end{quote}
+
+\begin{itemize}
+    \item \texttt{KILL}: apagado instantáneo.
+    \item \texttt{RAMP}: apagado progresivo.
+\end{itemize}
+
+\subsection{Monitoreo de parámetros}
+
+Los valores medidos se obtienen con comandos del tipo:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:MON,CH:\emph{n},PAR:VMON}} \\
+\textbf{\texttt{\$CMD:MON,CH:\emph{n},PAR:IMON}} \\
+\textbf{\texttt{\$CMD:MON,CH:\emph{n},PAR:STATUS}}
+\end{quote}
+
+Estos comandos:
+\begin{itemize}
+    \item No alteran el estado del HV.
+    \item Devuelven el valor real medido por la fuente.
+\end{itemize}
+
+\subsubsection{Encendido del canal}
+
+Antes de encender un canal, se verifica su estado mediante:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:MON,CH:\emph{n},PAR:STATUS}}
+\end{quote}
+
+El encendido de un canal HV debe realizarse únicamente tras verificar que los parámetros de protección han sido correctamente configurados.\\
+
+Si el canal está habilitado, el encendido se realiza con:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:ON}}
+\end{quote}
+
+Efectos físicos:
+\begin{itemize}
+    \item El alto voltaje comienza a subir según el \texttt{RUP}.
+    \item El canal alcanza el voltaje \texttt{VSET}.
+    \item El detector queda energizado.
+\end{itemize}
+
+\subsubsection{Apagado del canal}
+
+El apagado se realiza mediante:
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:OFF}}
+\end{quote}
+
+El voltaje desciende según el parámetro \texttt{RDW}.
+
+\subsection{Calibración de corriente cero}
+
+La calibración del cero de corriente se realiza en dos pasos.
+
+\subsubsection{Guardar corriente cero}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:ZCDTC,VAL:ON}}
+\end{quote}
+
+Guarda el valor actual de \texttt{IMON} como referencia de corriente nula.
+
+\subsubsection{Activar compensación}
+
+\begin{quote}
+\textbf{\texttt{\$CMD:SET,CH:\emph{n},PAR:ZCADJ,VAL:EN}}
+\end{quote}
+
+Activa la compensación electrónica del offset de corriente.
+
+
+\section{Código de Control}
+
+Se creó un framework de control de alto voltaje (HV) modular, con: 
+\begin{itemize}
+    \item Máquina de estados
+    \item Backend intercambiable (módulo CAEN real o Mock)
+    \item Sistema de alarmas desacoplado
+    \item Monitorización
+    \item Seguridad
+    \item Logging
+    \item Watchdog
+\end{itemize}
+Este sigue una lógica acorde al siguiente tree:
+\newline
+\dirtree{%
+.1 \texttt{ConfCAENmodule/}.
+.2 \texttt{hv\_run.py}.
+.2 \texttt{hv/}.
+.3 \texttt{alarm\_manager.py}.
+.3 \texttt{channel.py}.
+.3 \texttt{logger.py}.
+.3 \texttt{monitor.py}.
+.3 \texttt{safety.py}.
+.3 \texttt{state.py}.
+.3 \texttt{state\_manager.py}.
+.3 \texttt{system.py}.
+.3 \texttt{watchdog.py}.
+.3 \texttt{alarms/}.
+.4 \texttt{base.py}.
+.4 \texttt{leakage.py}.
+.4 \texttt{mismatch.py}.
+.4 \texttt{voltage\_stability.py}.
+.3 \texttt{backend/}.
+.4 \texttt{base.py}.
+.4 \texttt{caen.py}.
+.4 \texttt{mock.py}.
+.2 \texttt{logs/}.
+}\\
+
+En esta sección se buscará explicar cada parte del código en forma clara y detallada.\\
+
+El análisis se realizará por dependencias lógicas, las subsecciones siguientes, denotarán el flujo.
+ 
+\subsection{Núcleos del sistema}
+Aquí se abordarán los núcleos absolutos del sistema códigos "independientes" por si mismos que serán el pilar de funcionamiento de todo el proyecto, cualquier codigo mencionado en otro apartado en general acabará mencionando alguna función de estos. 
+Aquí participan los siguientes archivos:
+\begin{itemize}
+    \item \texttt{state.py}
+    \item \texttt{safety.py}
+\end{itemize}
+
+\subsubsection{Códigos de núcleo: \texttt{state.py, safety.py}}
+\begin{lstlisting}
+    #/hv/state.py
+from enum import Enum, auto
+
+class HVState(Enum):
+    OFF = auto()
+    ARMED = auto()
+    RAMPING_UP = auto()
+    ON = auto()
+    RAMPING_DOWN = auto()
+    TRIPPED = auto()
+    ERROR = auto()
+    FAULT = auto()
+\end{lstlisting}
+\begin{lstlisting}
+    # hv/safety.py
+
+class HVSafetyError(RuntimeError):
+    pass
+
+
+class HVLimits:
+    """
+    Límites duros del sistema (NO del usuario).
+    """
+
+    V_MAX = 2000.0      # Volt
+    I_MAX = 3e-3        # Ampere (3 mA)
+    I_TRIP_FACTOR = 1.2  # 20% sobre ISET
+
+
+def check_user_params(vset, iset):
+    if vset <= 0 or vset > HVLimits.V_MAX:
+        raise HVSafetyError(f"VSET inválido: {vset} V")
+
+    if iset <= 0 or iset > HVLimits.I_MAX:
+        raise HVSafetyError(f"ISET inválido: {iset} A")
+\end{lstlisting}
+
+\subsubsection{Archivo \texttt{safety.py} y Clases \texttt{HVSafetyError, HVLimits}}
+
+Este módulo (\texttt{safety.py}) define las restricciones físicas mínimas del sistema HV. No modela el comportamiento dinámico si no las restricciones estructurales que definen el espacio físico permitido de operación.\\
+
+La clase \texttt{HVSafetyError} es en esencia una excepción especializada que hereda de \texttt{RuntimeError}. Su propósito radica en diferenciar errores de seguridad de errores relativos a la lógica del sistema, además de permitir que capas superiores reaccionen de forma específica ante violaciones físicas. Con esto se impone la semántica del código con la cuál formalizamos los errores. \\
+
+Por otro lado, la clase \texttt{HVLimits} contiene los límites absolutos del sistema: \texttt{V\_MAX, I\_MAX, I\_TRIP\_FACTOR}, respectivamente estos valores representan el voltaje máximo permitido por el hardware, corriente máxima segura del sistema, factor de disparo relativo respecto a \texttt{ISET}, este parámetro es utilizado por capas superiores para implementar lógica de disparo dinámico. Cabe aclarar que eso no son parámetros del usuario, son restricciones estructurales del sistema. \\
+
+\textbf{Nota}: Notar que estos parámetros se deben ajustar a la documentación del dispositivo usado. Pueden además ser modificables de acuerdo a lo requerido por el aparato a usar. \\
+
+El módulo define la función \texttt{check\_user\_params} que utiliza los límites definidos en \texttt{HVLimits}, es de suma importancia, justamente por válidar que los parámetros ingresados por el usuario estén dentro de los límites físicos permitidos, en caso de que esto no se cumpla devuelve un \texttt{HVSafetyError}. 
+
+Esta capa representa la frontera entre la intención del usuario y la realidad física, a su vez funciona como la primera estructura de protección del sistema y la base sobre la cuál todo el resto opera.\\
+
+\subsubsection{Archivo \texttt{state.py} y Clase \texttt{HVState}}
+
+El archivo \texttt{state.py} define dl modelo formal de estados del canal HV. No contiene lógica, solo define el espacio de estados permitido.
+
+La clase \texttt{HVState} es básicamente un Enum que define:
+\begin{itemize}
+    \item OFF
+    \item ARMED
+    \item RAMPING\_UP
+    \item ON 
+    \item RAMPING\_DOWN
+    \item TRIPPED
+    \item ERROR
+    \item FAULT
+\end{itemize}
+Lo anterior define un espacio de estados finito, cerrado y explícito, lo que permite modelar el sistema como una máquina de estados determinista y verificable.\\
+
+Cada uno representa una configuración física y lógica distinta del sistema, como se ve a continuación:
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{|c|c|}
+        \hline
+        Estado & Significado \\ 
+        \hline
+        OFF & Canal apagado \\ 
+        ARMED & Parámetros cargados, listo para encender\\
+        RAMPING\_UP & Voltaje aumentando progresivamente\\
+        ON & Voltaje estable en \texttt{VSET}\\
+        RAMPING\_DOWN & Voltaje disminuyendo progresivamente\\
+        TRIPPED & Protección activada por evento interno\\
+        ERROR & Error lógico/software\\
+        FAULT  & Condición insegura persistente\\
+        \hline
+    \end{tabular}
+    \caption{Catálogo de estados del sistema}
+    \label{tab:Estados del sistema}
+\end{table}
+En la tabla se dsitingue entre eventos de protección automáticos (\texttt{TRIPPED}), errores internos de ejecución (\texttt{ERROR}) y condiciones inseguras persistentes que requieren intervención (\texttt{FAULT}).
+Esta clase permite evitar combinaciones inválidas de comportamiento, formalizar transiciones permitidas, y diseñar la máquina de estados en \texttt{channel.py}, se reitera que el Enum define el espacio formal sobre el cual la FSM implementada en \texttt{channel.py} opera de manera determinista.\\
+
+La separación entre el modelo físico (\texttt{HVLimits}) y modelo lógico (\texttt{HVState}) permite desacoplar restrucciones estructurales del sistema de su comportamiento operativo, facilitando mantenibilidad, extensibilidad y verificabilidad formal
+
+
+\subsection{Comunicación con el hardware físico: Backend}
+
+\subsubsection{Código del backend}
+\begin{lstlisting}
+    #ConfCAENmodule/hv/backend/base.py
+from abc import ABC, abstractmethod
+
+class HVBackend(ABC):
+
+    @abstractmethod
+    def set_voltage(self, ch, voltage):
+        pass
+
+    @abstractmethod
+    def set_current(self, ch, current):
+        pass
+
+    @abstractmethod
+    def on(self, ch):
+        pass
+
+    @abstractmethod
+    def off(self, ch):
+        pass
+
+    @abstractmethod
+    def get_vmon(self, ch):
+        pass
+
+    @abstractmethod
+    def get_imon(self, ch):
+        pass
+
+\end{lstlisting}
+
+\begin{lstlisting}
+    # hv/backend/caen.py
+
+import time
+import logging
+import threading
+import pyvisa
+
+from hv.backend.base import HVBackend
+from hv.safety import HVSafetyError
+
+
+class CAENBackend(HVBackend):
+
+    V_MAX = 1450.0
+    I_MAX = 1e-4
+    P_MAX_CH = 5.0
+    P_MAX_TOTAL = 20.0
+
+    def __init__(self, resource_name,
+                 timeout_ms=5000,
+                 max_retries=3,
+                 retry_delay=0.2):
+
+        self.logger = logging.getLogger("HV.Backend.CAEN")
+        self.logger.info(f"Iniciando backend CAEN en {resource_name}")
+
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.active_channels = set()
+
+        #Lock global → hace thread-safe todo el backend
+        self._lock = threading.Lock()
+
+        try:
+            self.rm = pyvisa.ResourceManager()
+            self.inst = self.rm.open_resource(resource_name)
+
+            self.inst.timeout = timeout_ms
+            self.inst.write_termination = '\n'
+            self.inst.read_termination = '\n'
+
+            self.logger.info("Conexión VISA establecida satisfactoriamente")
+
+        except Exception as e:
+            self.logger.error(f"No se pudo conectar al módulo CAEN: {e}")
+            raise
+
+    # ==================================================
+    # Comunicación robusta (THREAD SAFE)
+    # ==================================================
+
+    def send_command(self, cmd):
+        """
+        Envía comando al módulo CAEN de forma protegida.
+        Nunca hace clear agresivo.
+        Nunca mezcla respuestas entre threads.
+        """
+
+        with self._lock:
+
+            for attempt in range(1, self.max_retries + 1):
+
+                try:
+                    resp = self.inst.query(cmd)
+
+                    if not resp:
+                        raise RuntimeError("Respuesta vacía del HV")
+
+                    resp = resp.strip()
+
+                    return resp
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"[CAEN] Intento {attempt}/{self.max_retries} falló: {e}"
+                    )
+                    time.sleep(self.retry_delay)
+
+            raise RuntimeError(f"send_command falló definitivamente: {cmd}")
+
+    # ==================================================
+    # Helpers
+    # ==================================================
+
+    def _expect_ok(self, resp, context="SET"):
+        if "OK" not in resp:
+            raise RuntimeError(f"Respuesta inesperada ({context}): '{resp}'")
+
+    def _parse_val(self, resp, label):
+        """
+        Parser tolerante:
+        - Si hay basura antes o después → intenta rescatar VAL:
+        - Si no existe → error claro
+        """
+
+        if "VAL:" not in resp:
+            raise RuntimeError(f"No se recibió VAL en {label}: '{resp}'")
+
+        try:
+            val_part = resp.split("VAL:")[1]
+            val_part = val_part.split(";")[0]
+            return float(val_part)
+
+        except Exception as e:
+            raise RuntimeError(f"Parse fallo en {label}: {e} | resp='{resp}'")
+
+    # ==================================================
+    # SETTERS
+    # ==================================================
+
+    def set_voltage(self, ch, vset):
+
+        if vset > self.V_MAX:
+            raise HVSafetyError(f"CH{ch}: VSET {vset}V excede máximo físico")
+
+        cmd = f"$CMD:SET,CH:{ch},PAR:VSET,VAL:{float(vset):.2f}"
+        resp = self.send_command(cmd)
+        self._expect_ok(resp, "VSET")
+
+        self.logger.info(f"CH{ch}: VSET fijado en {vset:.2f} V")
+
+    def set_current(self, ch, iset):
+
+        if iset > self.I_MAX:
+            raise HVSafetyError(f"CH{ch}: ISET {iset}A excede máximo físico")
+
+        iset_ua = iset * 1e6
+        cmd = f"$CMD:SET,CH:{ch},PAR:ISET,VAL:{iset_ua:.2f}"
+        resp = self.send_command(cmd)
+        self._expect_ok(resp, "ISET")
+
+        self.logger.info(f"CH{ch}: ISET fijado en {iset_ua:.2f} uA")
+
+    def set_ramp_up(self, ch, ramp_speed):
+
+        cmd = f"$CMD:SET,CH:{ch},PAR:RUP,VAL:{int(ramp_speed)}"
+        resp = self.send_command(cmd)
+        self._expect_ok(resp, "RUP")
+
+    def on(self, ch):
+
+        cmd = f"$CMD:SET,CH:{ch},PAR:ON"
+        resp = self.send_command(cmd)
+        self._expect_ok(resp, "ON")
+
+        self.active_channels.add(ch)
+        self.logger.info(f"CH{ch} -> ON enviado")
+
+    def off(self, ch):
+
+        cmd = f"$CMD:SET,CH:{ch},PAR:OFF"
+        resp = self.send_command(cmd)
+        self._expect_ok(resp, "OFF")
+
+        self.active_channels.discard(ch)
+        self.logger.info(f"CH{ch} -> OFF enviado")
+
+    # ==================================================
+    # MONITOREO
+    # ==================================================
+
+    def get_vmon(self, ch):
+
+        resp = self.send_command(f"$CMD:MON,CH:{ch},PAR:VMON")
+        return self._parse_val(resp, f"VMON CH{ch}")
+
+    def get_imon(self, ch):
+
+        resp = self.send_command(f"$CMD:MON,CH:{ch},PAR:IMON")
+        val_ua = self._parse_val(resp, f"IMON CH{ch}")
+
+        return val_ua * 1e-6
+
+    def get_channel_status(self, ch):
+
+        resp = self.send_command(f"$CMD:MON,CH:{ch},PAR:STAT")
+        val = self._parse_val(resp, f"STAT CH{ch}")
+
+        stat = int(val)
+
+        return {
+            "on":        bool(stat & 1),
+            "ramping":   bool(stat & 2) or bool(stat & 4),
+            "ovc":       bool(stat & 8),
+            "maxv":      bool(stat & 64),
+            "kill":      bool(stat & 2048),
+            "interlock": bool(stat & 4096),
+        }
+
+    # ==================================================
+    # CIERRE
+    # ==================================================
+
+    def close(self):
+
+        with self._lock:
+            try:
+                if hasattr(self, "inst"):
+                    self.inst.close()
+                if hasattr(self, "rm"):
+                    self.rm.close()
+
+                self.logger.info("Sesión VISA cerrada correctamente")
+
+            except Exception as e:
+                self.logger.warning(f"Error cerrando VISA: {e}")
+
+\end{lstlisting}
+El backend constituye la capa más baja que interactúa directamente con el hardware físico. Sin embargo, los límites estructurales del sistema están definidos en módulos independientes (safety.py y state.py), los cuales forman el fundamento lógico del sistema. Así, el backend es el único componente autorizado a interactuar directamente con el bus de comunicación VISA. Esta decisión arquitectónica garantiza un desacople completo entre la lógica experimental y los detalles de implementación del hardware.\\
+
+\subsubsection{Class: \texttt{HVBackend}}
+
+La clase abstracta \texttt{HVBackend} define un contrato formal que toda implementación concreta debe satisfacer. De esta manera, el sistema superior opera exclusivamente sobre una interfaz estable, permitiendo sustituir el hardware físico por simuladores (mock) sin alterar el resto del software.\\
+
+
+En este código , se nos presentan dos clases: \texttt{HVBackend} y \texttt{CAENBackend}.\\
+
+
+La primera posee métodos abstractos:
+\begin{lstlisting}
+    set_voltage(self, ch, voltage)
+    set_current(self, ch, current)
+    on(self, ch)
+    off(self, ch)
+    get_vmon(self, ch)
+    get_imon(self, ch)
+
+\end{lstlisting}\\
+Estos están presentes con el fin de definir una interfaz formal que impone lo que todo backend debiese ser capaz de hacer:
+\begin{itemize}
+    \item Configurar parámetros eléctricos
+    \item Encender y apagar un canal
+    \item Medir variables monitoreadas
+\end{itemize}
+En consecuencia cualquier archivo \text{".py"} de capas superiores puede usar cualquier backend que implemente esta interfaz.\\
+
+A continuación, se mostrarán los contratos de cada "@abstractmethod".\\
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{|c|c|}
+        \hline
+        @abstractmethod & Contrato \\ 
+        \hline
+        \hline
+        \texttt{set\_voltage(self, c, voltage)} & El backend debe ser capaz de fijar el voltaje objetivo en un canal. \\ 
+        \texttt{set\_current(self, ch, current)} & El backend debe poder fijar límite de corriente. \\ 
+        \texttt{on(self, ch)} & Debe existir una forma de energizar el canal. \\
+
+        \texttt{off(self, ch)} & Debe existir una forma de desenergizar el canal.\\
+
+        \texttt{get\_vmon(self, ch)} & Debe poder leer el voltaje real monitoreado.\\
+
+        \texttt{get\_imon(self, ch)} & Debe poder leer la corriente real monitoreada. 
+        \hline
+    \end{tabular}
+    \caption{Contratos}
+    \label{tab:ejemplo_dos_columnas}
+\end{table}
+
+Lo importante de esto es que \texttt{HVBackend} es un "acuerdo estructural". \\
+
+\subsubsection{Class: \texttt{CAENBackend}}
+
+Por el contrario, \texttt{CAENBackend} es la implementación concreta para el hardware CAEN (DT5533EN), nos dice cómo HVBackend debe hacer dichos métodos.\\ 
+
+Estos métodos los implementa usando:
+\begin{itemize}
+    \item \texttt{pyvisa}
+    \item Comunicación por instrumento.
+    \item Comandos específicos del hardware CAEN (expuestos en la sección anterior). 
+\end{itemize}
+
+El rol principal de esta clase, radica en traducir operaciones abstractas del HV en comandos reales al equipo CAEN. Funciona como puente entre la lógica del sistema (máquina de estados, seguridad, logging) y el Hardware real. \\
+
+La clase en sí cumple estas funciones: 
+
+\begin{itemize}
+    \item \textbf{Inicialización}: \newline En \texttt{\_\_init\_\_}, recibe \texttt{resource\_name}, abre conexión con \texttt{pyvisa} y configura los límites máximos: \texttt{V\_MAX, I\_MAX, P\_MAX\_CH, P\_MAX\_TOTAL}. Estos límites adquieren importancia ya que la seguridad no puede depender solo del hardware. \\
+
+    \item \textbf{Mecanismo de comunicación robusta}: \newline
+    El método \texttt{send\_command} constituye el núcleo de confiabilidad del backend. 
+Si bien su función aparente es enviar comandos al instrumento mediante VISA, 
+su verdadero rol es garantizar comunicación determinista y segura en un entorno concurrente.
+
+En primer lugar, el método se encuentra protegido por un \texttt{threading.Lock}, 
+lo que asegura exclusión mutua en el acceso al bus VISA. 
+Dado que el sistema incorpora múltiples hilos (por ejemplo, monitoreo y watchdog), 
+la ausencia de este mecanismo podría provocar condiciones de carrera, intercalación de respuestas y corrupción de la interpretación del protocolo.
+
+En segundo lugar, se implementa una política de reintentos controlados 
+(\texttt{max\_retries}), con un retardo configurable entre intentos. 
+Esto permite absorber fallos transitorios de comunicación sin comprometer la estabilidad global del sistema.
+
+Finalmente, si tras agotar los reintentos no se obtiene una respuesta válida, 
+el método genera una excepción explícita, evitando estados ambiguos o silenciosamente corruptos.
+
+En consecuencia, \texttt{send\_command} actúa como una capa de robustez intermedia 
+entre la lógica experimental y el hardware físico. 
+    
+
+    \item \textbf{Implementación de métodos abstractos}: \newline 
+    Notemos que la clase anterior definía métodos, por ende \texttt{CAENBackend}, debiese implementar algo del tipo:
+    \begin{lstlisting}
+        #En HVBackend
+        def set_voltage(self, ch, value):
+            pass
+
+        #En CAENBackend
+        def set_votage(self, ch, value):
+            # validaciones
+            # chequeo de límites
+            # envío de comando al instrumento
+    \end{lstlisting}
+    Aquí es donde ocurre la validación específica del hardware, complementaria a los límites estructurales definidos en \texttt{safety.py}\\
+
+    \item \textbf{Seguridad}: \newline
+    Como ya se mencionó en el primer apartado, se establecen los máximos para el funcionamiento correcto tanto del módulo como de cada canal por separado. Dado que el sistema opera típicamente en el régimen de $1250\,V$ y $100\,\mu A$,
+    la potencia efectiva por canal es del orden de 0.125\,W, muy por debajo del límite nominal del módulo (4\,W). En consecuencia, el riesgo de sobrepotencia en la configuración actual es despreciable.
+    El control efectivo se limita a restricciones de voltaje y corriente (esto evidentemente impone en simultáneo cotas para la potencia),  si ocurre algún escenario que comprometa el funcionamiento del módulo, se lanzará una excepción de seguridad, por ello se importa desde \texttt{safety.py}: \texttt{HVSafetyError}.
+
+    \item \textbf{Logging}: \newline
+    Cada operación queda registrada, lo que permite trazabilidad y reconstrucción de fallos. 
+\end{itemize}
+
+En síntesis, el backend constituye la única interfaz autorizada
+entre el sistema de control y el hardware físico, encapsulando
+completamente los detalles de comunicación, validación y robustez. \\
+
+\subsection{Modelado del canal}
+Esta capa es la que controla formalmente  el canal HV. Orquesta el backend, aplica reglas físicas (\texttt{safety.py}), implementa la máquina de estados (\texttt{state.py}), ejectua transiciones seguras y encapsula la lógica de encendido/apagado. 
+
+\subsubsection{Código de \texttt{channel.py}}
+\begin{lstlisting}
+    # hv/channel.py
+import time
+import logging
+from .safety import check_user_params, HVSafetyError, HVLimits
+from .state import HVState
+from hv.backend.base import HVBackend
+
+logger = logging.getLogger("HV.Channel")
+
+
+class HVChannel:
+
+    def __init__(self, ch, backend: HVBackend, vset, iset, rup=20, rdown=20, powerdown="KILL"):
+        check_user_params(vset, iset)
+        self.ch = ch
+        self.backend = backend
+        self.vset = vset
+        self.iset = iset
+        self.rup = rup
+        self.rdown = rdown
+        self.powerdown = powerdown
+        self.state = HVState.OFF
+        self.last_vmon = 0.0
+        self.last_imon = 0.0
+
+    # -----------------------------
+    # Configuración y Encendido
+    # -----------------------------
+    def setup(self):
+        """Configura parámetros en hardware."""
+        logger.info(f"[CH{self.ch}] Configurando: VSET={self.vset}V, ISET={self.iset}A")
+        self.backend.set_voltage(self.ch, self.vset)
+        self.backend.set_current(self.ch, self.iset)
+        self.backend.set_ramp_up(self.ch, self.rup)
+        # self.backend.set_ramp_down(self.ch, self.rdown) # opcional
+
+    def validate_before_on(self, max_off_voltage=10.0):
+        """
+        Validación de seguridad antes de encender.
+        El canal debe estar cercano a 0V (no a VSET).
+        """
+
+        vmon = self.vmon()
+        imon = self.imon()
+        status = self.backend.get_channel_status(self.ch)
+
+        # ---- Voltaje residual antes de encender ----
+        if vmon > max_off_voltage:
+            raise HVSafetyError(
+                f"CH{self.ch}: VMON={vmon:.2f} V no es cercano a 0 antes de encender"
+            )
+
+        # ---- Corriente anómala antes de encender ----
+        if imon > min(self.iset * 1.1, HVLimits.I_MAX):
+            raise HVSafetyError(
+                f"CH{self.ch}: IMON={imon:.3e} A excede límite antes de encender"
+            )
+
+        # ---- Interlock / Kill ----
+        if status and (status.get("kill") or status.get("interlock")):
+            raise HVSafetyError(
+                f"CH{self.ch}: Canal en estado KILL o INTERLOCK"
+            )
+
+
+    def turn_on(self, timeout=60):
+        """
+        Enciende el canal HV de forma segura.
+        Flujo correcto:
+        OFF → ARMED → RAMPING_UP → ON
+        """
+
+        logger.info(f"[CH{self.ch}] Solicitud de encendido")
+
+        # --------- Estados inválidos ---------
+        if self.state in (HVState.FAULT, HVState.ERROR):
+            logger.error(f"[CH{self.ch}] No se puede encender: estado {self.state.name}")
+            return False
+
+        if self.state in (HVState.ON, HVState.RAMPING_UP):
+            logger.warning(f"[CH{self.ch}] Ya está encendido o ramping")
+            return True
+
+        # --------- Si está OFF, armar primero ---------
+        if self.state == HVState.OFF:
+            try:
+                self.arm()
+            except Exception as e:
+                logger.error(f"[CH{self.ch}] Falló arm(): {e}")
+                return False
+
+        # --------- Verificar que quedó ARMED ---------
+        if self.state != HVState.ARMED:
+            logger.error(f"[CH{self.ch}] No está ARMED, no se puede encender")
+            return False
+
+        # --------- Encendido real ---------
+        try:
+            self.state = HVState.RAMPING_UP
+
+            self.backend.on(self.ch)
+            logger.info(f"[CH{self.ch}] Comando ON enviado")
+
+            # �� ahora usa timeout configurable
+            if not self.wait_until_vset(timeout=timeout):
+                logger.error(f"[CH{self.ch}] No alcanzó VSET en {timeout}s")
+                self.state = HVState.ERROR
+                return False
+
+            self.state = HVState.ON
+            logger.info(f"[CH{self.ch}] Canal ON estable")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"[CH{self.ch}] Error durante encendido: {e}")
+            self.state = HVState.ERROR
+            return False
+
+
+    def wait_until_vset(self, timeout=30, tolerance=1.5):
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+
+            status = self.backend.get_channel_status(self.ch)
+            if status is None:
+                logger.warning(f"[CH{self.ch}] No se pudo leer estado, reintentando...")
+                time.sleep(0.5)
+                continue
+
+            v_actual = self.vmon()
+            i_actual = self.imon()
+
+            # --------- Checks críticos ---------
+            if status.get("kill") or status.get("interlock"):
+                logger.critical(f"[CH{self.ch}] Canal en KILL/INTERLOCK! Apagando...")
+                self.turn_off()
+                return False
+
+            if status.get("ovc") or i_actual > HVLimits.I_MAX:
+                logger.critical(
+                    f"[CH{self.ch}] Sobrecorriente detectada ({i_actual:.3e}A)! Apagando..."
+                )
+                self.turn_off()
+                return False
+
+            if v_actual > HVLimits.V_MAX:
+                logger.critical(
+                    f"[CH{self.ch}] VMON {v_actual:.2f} V excede V_MAX {HVLimits.V_MAX} V"
+                )
+                self.turn_off()
+                return False
+
+            # --------- Chequeo de VSET ---------
+            if v_actual >= (self.vset - tolerance):
+                return True
+
+            time.sleep(0.5)
+
+        # --------- Timeout ---------
+        logger.error(f"[CH{self.ch}] Timeout al alcanzar VSET (VMON={v_actual:.2f}V)")
+        return False
+
+
+    def turn_off(self):
+        """Apagado seguro."""
+        logger.warning(f"[CH{self.ch}] Apagando canal...")
+        try:
+            self.backend.off(self.ch)
+        except Exception as e:
+            logger.error(f"[CH{self.ch}] Fallo al apagar: {e}")
+        self.state = HVState.OFF
+
+    # -----------------------------
+    # Getters directos al backend
+    # -----------------------------
+    def vmon(self):
+        v = self.backend.get_vmon(self.ch)
+        self.last_vmon = v
+        return v
+
+    def imon(self):
+        i = self.backend.get_imon(self.ch)
+        self.last_imon = i
+        return i
+
+    # -----------------------------
+    # Powerdown / KILL
+    # -----------------------------
+    def kill(self):
+        """Apagado de emergencia"""
+        logger.critical(f"[CH{self.ch}] POWERDOWN KILL activado")
+        self.turn_off()
+        self.state = HVState.FAULT
+
+    def restore(self, state_dict):
+        """
+        Restaura parámetros del canal desde un dict (por ejemplo, cargado desde HVStateManager).
+
+        state_dict debe contener:
+        - 'vset', 'iset', 'ramp_up', 'last_vmon', 'last_imon', 'state'
+        """
+        logger.info(f"[CH{self.ch}] Restaurando estado previo...")
+
+        self.vset = state_dict.get("vset", self.vset)
+        self.iset = state_dict.get("iset", self.iset)
+        self.rup = state_dict.get("ramp_up", self.rup)
+        self.last_vmon = state_dict.get("last_vmon", 0.0)
+        self.last_imon = state_dict.get("last_imon", 0.0)
+
+        state_name = state_dict.get("state", "OFF")
+        self.state = HVState[state_name] if state_name in HVState.__members__ else HVState.OFF
+
+        # Configurar hardware si no estaba apagado
+        if self.state != HVState.OFF:
+            try:
+                self.setup()  # Re-aplica vset, iset, ramp
+                logger.info(f"[CH{self.ch}] Hardware restaurado a VSET={self.vset}, ISET={self.iset}")
+            except Exception as e:
+                logger.error(f"[CH{self.ch}] Fallo al restaurar hardware: {e}")
+                self.state = HVState.ERROR
+    def arm(self):
+        """
+        Prepara el canal sin encenderlo.
+        - Valida parámetros
+        - Aplica configuración al hardware
+        """
+        logger.info(f"[CH{self.ch}] Armando canal...")
+
+        if self.state in (HVState.ON, HVState.RAMPING_UP):
+            logger.warning(f"[CH{self.ch}] No se puede armar: canal activo")
+            return
+
+        if self.state == HVState.FAULT:
+            logger.error(f"[CH{self.ch}] No se puede armar: estado FAULT")
+            return
+
+        try:
+            self.validate_before_on()
+            self.setup()
+            self.state = HVState.ARMED
+            logger.info(f"[CH{self.ch}] Canal ARMED correctamente")
+        except HVSafetyError as e:
+            logger.critical(f"[CH{self.ch}] Error de seguridad al armar: {e}")
+            self.state = HVState.FAULT
+            raise
+        except Exception as e:
+            logger.error(f"[CH{self.ch}] Error al armar: {e}")
+            self.state = HVState.ERROR
+            raise
+    
+    def is_ramping(self):
+        status = self.backend.get_channel_status(self.ch)
+        return status.get("ramping", False)
+
+\end{lstlisting}
+
+\subsubsection{Archivo \texttt{channel.py}}
+
+Este módulo depende del modelo físico (\texttt{HVLimits}): define leyes físicas del sistema, del modelo lógico (\texttt{HVState}): barrera de entrada y de la interfaz abstracta del hardware (\texttt{HVBackend}): separa errores físicos de errores de hardware genéricos.\\
+
+Al inicializar \texttt{def \_\_init\_\_(...)}, lo primero que hace es: \texttt{check\_user\_params(vset, iset)} Esto es clave, ya que la máquina de estados jamás se creará en condiciones inválidas. \\
+Luego \texttt{self.state = HVState.OFF}, todo canal comienza en OFF. Esto evita implícitos peligrosos. \\
+
+La lógica además implementa una máquina de estados implícita, en forma resumida existen funciones con transiciones, salvedad de que no se hacen explícitas algunas etapas. Estas transiciones están distribuidas en:
+\begin{itemize}
+    \item \texttt{arm()}
+    \item \texttt{turn\_on()}
+    \item \texttt{wait\_until\_vset()}
+    \item \texttt{turn\_off()}
+    \item \texttt{kill()}
+    \item \texttt{restore()}
+\end{itemize}
+
+\subsubsection{Métodos implementados en \texttt{channel.py}}
+
+\begin{itemize}
+    \item \texttt{arm()}: Este método representa la transición \texttt{OFF} $\to$ \texttt{ARMED}. 
+    El flujo radica en:
+    \begin{enumerate}
+        \item Verificar que no estéen \texttt{ON} o \texttt{RAMPING}.
+        \item Verifica que no esté en \texttt{FAULT}.
+        \item Ejecuta \texttt{validate\_before\_on}
+        \item Aplica \texttt{setup()}
+        \item Cambia estado a \texttt{ARMED}.
+    \end{enumerate}
+    Si falla la seguridad, devuelve un \texttt{FAULT}. Aquí la validación es crucial ya que esto permite que ocurra antes de tocar el hardware, así se evita problemas a futuro, y también dañar el equipamiento. \\
+    
+    \item \texttt{turn\_on()}: Implementa una transición jerárquica donde encapsula el flujo \texttt{OFF $\to$ ARMED $\to$ RAMPING\_UP} como una única operación desde el punto de vista del usuario:
+    \begin{enumerate}
+        \item \textbf{Estados inválidos}: \texttt{if self.state in (FAULT, ERROR):} bloquea la transición.
+
+        \item \textbf{Si está OFF $\to$ arma primero}: Hace la transición automática \texttt{OFF $\to$ ARMED}.
+
+        \item \textbf{Si no quedó \texttt{ARMED} $\to$ aborta}: Evita un estado intermedio corrupto.
+
+        \item \textbf{Transición real}:
+        \begin{lstlisting}
+            self.state = HVState.RAMPING_UP
+            self.backend.on(self.ch)
+        \end{lstlisting}
+        Luego, se produce la transición \texttt{RAMPING\_UP $\to$ ON} solo sí \texttt{wait\_until\_vset()} retorna \texttt{True}. 
+        Caso contrario \texttt{RAMPING\_UP $\to$ ERROR}.
+    \end{enumerate}
+
+    \item \texttt{wait\_until\_vset()}: Se implementa un lazo de supervisión activa durante la rampa de subida.\\
+    Este lazo monitorea continuamente:
+    \begin{itemize}
+        \item Estado lógico del canal
+        \item Voltaje monitoreado (VMON)
+        \item Corriente monitoreada (IMON)
+        \item Bits críticos de estado (interlock, kill, overcurrent)
+    \end{itemize}
+
+    Durante la rampa, el sistema no asume que el hardware es intrínsecamente seguro. La transición a estado ON sólo ocurre tras verificación explícita de condiciones eléctricas y de estado interno.\\
+    Ante cualquier condición anómala, el sistema ejecuta un apagado inmediato y retorna un estado de error. \\
+    Esto convierte la fase de rampa en un proceso supervisado y no simplemente en un retardo pasivo, incrementando significativamente la robustez del sistema. 
+    
+    \item \texttt{turn\_off()}: Hace una transición simple y además dominante, se cual sea el estado del canal siempre termina en \texttt{OFF}. No recurre a validaciones, actúa básicamente de forma imperativa por seguridad. 
+
+    \item \texttt{kill()}: Este es un apagado de emergencia, transiciona de cualquier estado a \texttt{FAULT} luego de identificar una condición insegura o crítica.
+
+    \item \texttt{restore()}: Este método conecta con la persistencia del proyecto, en caso de que en el último logger enviado a los archivos CSV, se haya identificado un apagado no programado se intentará restaurar los parámetros físicos y el estado lógico solo si el estado previo no era \texttt{OFF}, pero no reactiva automáticamente el canal, evitando así encendidos no supervisados.  
+\end{itemize}
+
+El diseño implementa una FSM distribuida proceduralmente, donde las transiciones están encapsuladas en métodos que validan precondiciones y postcondiciones explícitas.
+
+\subsection{Alarmas}
+ 
+Esta capa es lógicamente paralela al backend, pero conceptualmente superior. Es una capa capaz de devolver un diagnóstico estructurado.
+ \subsubsection{Códigos de \texttt{alarms}}
+ 
+ Recordando el tree, del inicio de sección tendremos los siguientes códigos dentro de nuestra capa de alarmas. 
+
+\begin{lstlisting}
+     # hv/alarms/base.py
+
+from enum import Enum, auto
+from abc import ABC, abstractmethod
+
+
+class AlarmLevel(Enum):
+    OK = auto()
+    WARNING = auto()
+    CRITICAL = auto()
+
+
+class AlarmResult:
+    def __init__(self, level: AlarmLevel, message: str = ""):
+        self.level = level
+        self.message = message
+
+    def is_ok(self):
+        return self.level == AlarmLevel.OK
+
+    def is_warning(self):
+        return self.level == AlarmLevel.WARNING
+
+    def is_critical(self):
+        return self.level == AlarmLevel.CRITICAL
+
+
+class BaseAlarm(ABC):
+    """
+    Clase base para TODAS las alarmas.
+    NO tiene efectos secundarios.
+    """
+
+    name = "BASE"
+
+    @abstractmethod
+    def evaluate(self, sample: dict) -> AlarmResult:
+        """
+        sample contiene mediciones ya tomadas:
+        {
+            "timestamp": datetime,
+            "vmon": float,
+            "imon": float,
+            "vset": float,
+        }
+        """
+        pass
+
+\end{lstlisting}
+\begin{lstlisting}
+    # hv/alarms/leakage.py
+
+from collections import deque
+from .base import BaseAlarm, AlarmResult, AlarmLevel
+
+
+class LeakageAlarm(BaseAlarm):
+    """
+    Detecta aumento lento y sostenido de corriente (fuga).
+    """
+
+    name = "LEAKAGE"
+
+    def __init__(
+        self,
+        window_size=30,
+        slope_threshold=1e-9
+    ):
+        """
+        window_size: número de muestras para evaluar tendencia
+        slope_threshold: aumento promedio permitido [A/muestra]
+        """
+        self.window_size = window_size
+        self.slope_threshold = slope_threshold
+        self._imon_buffer = deque(maxlen=window_size)
+
+    def evaluate(self, sample: dict) -> AlarmResult:
+        """
+        sample:
+        {
+            "imon": float,
+            "ramping": bool,
+        }
+        """
+
+        # No evaluamos durante ramping
+        if sample.get("ramping", False):
+            self._imon_buffer.clear()
+            return AlarmResult(AlarmLevel.OK)
+
+        imon = sample.get("imon")
+        if imon is None:
+            return AlarmResult(AlarmLevel.OK)
+
+        self._imon_buffer.append(imon)
+
+        # Aún no hay suficientes datos
+        if len(self._imon_buffer) < self.window_size:
+            return AlarmResult(AlarmLevel.OK)
+
+        # Pendiente promedio simple
+        delta_i = self._imon_buffer[-1] - self._imon_buffer[0]
+        slope = delta_i / len(self._imon_buffer)
+
+        if slope > self.slope_threshold:
+            return AlarmResult(
+                AlarmLevel.WARNING,
+                f"Corriente en aumento lento (ΔI ≈ {delta_i:.2e} A)"
+            )
+
+        return AlarmResult(AlarmLevel.OK)
+
+\end{lstlisting}
+\begin{lstlisting}
+    # hv/alarms/mismatch.py
+
+from .base import BaseAlarm, AlarmResult, AlarmLevel
+
+
+class VoltageMismatchAlarm(BaseAlarm):
+    name = "VSET_MISMATCH"
+
+    def __init__(self, tolerance=5.0, max_samples=6):
+        """
+        tolerance: diferencia permitida |VMON - VSET| [V]
+        max_samples: número de muestras consecutivas fuera de tolerancia
+        """
+        self.tolerance = tolerance
+        self.max_samples = max_samples
+        self.counter = 0
+
+    def evaluate(self, sample: dict) -> AlarmResult:
+        if sample.get("ramping", False):
+            self.counter = 0
+            return AlarmResult(AlarmLevel.OK)
+
+        vmon = sample.get("vmon")
+        vset = sample.get("vset")
+
+        if vmon is None or vset is None:
+            return AlarmResult(AlarmLevel.OK)
+
+        if abs(vmon - vset) > self.tolerance:
+            self.counter += 1
+        else:
+            self.counter = 0
+
+        if self.counter >= self.max_samples:
+            return AlarmResult(
+                AlarmLevel.CRITICAL,
+                f"VMON ({vmon:.1f} V) != VSET ({vset:.1f} V) persistente"
+            )
+
+        return AlarmResult(AlarmLevel.OK)
+
+
+\end{lstlisting}
+\begin{lstlisting}
+    # hv/alarms/voltage_stability.py
+
+from collections import deque
+from statistics import stdev
+from .base import BaseAlarm, AlarmResult, AlarmLevel
+
+
+class VoltageStabilityAlarm(BaseAlarm):
+    name = "VOLTAGE_STABILITY"
+
+    def __init__(self, window=20, std_threshold=10.0):
+        """
+        window: número de muestras
+        std_threshold: σ máximo permitido [V]
+        """
+        self.values = deque(maxlen=window)
+        self.std_threshold = std_threshold
+
+    def evaluate(self, sample: dict) -> AlarmResult:
+        if sample.get("ramping", False):
+            self.values.clear()
+            return AlarmResult(AlarmLevel.OK)
+
+        vmon = sample.get("vmon")
+        if vmon is None:
+            return AlarmResult(AlarmLevel.OK)
+
+        self.values.append(vmon)
+
+        if len(self.values) < self.values.maxlen:
+            return AlarmResult(AlarmLevel.OK)
+
+        sigma = stdev(self.values)
+
+        if sigma > self.std_threshold:
+            return AlarmResult(
+                AlarmLevel.WARNING,
+                f"VMON inestable (σ={sigma:.1f} V)"
+            )
+
+        return AlarmResult(AlarmLevel.OK)
+
+\end{lstlisting}
+
+\subsubsection{Archivo: \texttt{base.py}}
+Es el núcleo conceptual del sistema de alarmas, se define la estructura abstracta sobre la cual se construyen todas las alarmas. \\
+
+\begin{itemize}
+    \item \texttt{Class :AlarmLevel}: \newline
+    Define los niveles posibles: \texttt{OK, WARNING, CRITICAL}. Con esto estandarizamos la severidad, lo que nos permite que otras capas reaccionen distinto según nivel, evita usar strings sueltos, y formaliza el contrato entre capas.
+    \item \texttt{Class: AlarmResult}: \newline
+    Contiene:
+    \begin{lstlisting}
+        level: AlarmLevel
+        message: str
+    \end{lstlisting}
+    Y helpers:
+    \begin{lstlisting}
+        is_ok()
+        is_warning()
+        is_critical()
+    \end{lstlisting}
+    Con esto implementado tenemos una respuesta semántica estructurada, sin booleanos que carecen de interpretación. Además el \texttt{AlarmManager} puede tomar decisiones sin conocer la implementación interna.\\
+    \item \texttt{Class: BaseAlarm}: \newline
+    Obliga a todas las alarmas a recibir un \texttt{sample}, devolver un \texttt{AlarmResult} y no ejecutar efectos ocultos o en segundo plano. Define las alarmas como código de diagnóstico sin efectos secundarios, cuyo estado interno se limita al análisis temporal de las mediciones.\\
+\end{itemize}
+
+\subsubsection{Archivo: \texttt{leakage.py}}
+
+Este código tiene la función de detectar un aumento lento y sostenido de corriente, lo que a priori nos da indicios de que, por ejemplo para el sistema de tubo fotomultiplicador podría haber una posible fuga de corriente en el PMT o en el divisor de voltaje. \\
+
+El funcionamiento se basa en mantener un buffer deslizante (\texttt{deque}), que calcula una pendiente promedio de la corriente, si esta pendiente supera un umbral se envía un \texttt{WARNING} al logger. Notar que evidentemente esto no se evalúa durante los \texttt{RAMPING\_UP} y \texttt{RAMPING\_DOWN}. \\
+
+Lo anterior, nace únicamente de considerar errores medibles en el hardware pero no su origen. Como posibles causas podemos explorar, contaminación, humedad del ambiente, daño progresivo en el circuito, o carga acumulada en aislación.\\ 
+
+En síntesis, esta alarma es de comportamiento lento, detecta errores a largo plazo. \\
+
+\subsubsection{Archivo: \texttt{mismatch.py}}
+
+Este script detecta una diferencia sostenida entre voltaje real y voltaje objetivo, lo cuál es grave. \\
+
+Su funcionamiento y mecanismo de detección se basa en medir $\left| V_{\text{MON}} - V_{\text{SET}} \right| > \Delta V_{\text{tol}}
+$ se incrementa un contador. Si esto llega a ocurrir consecutivamente una cantidad \texttt{max\_samples} de veces, lanza un \texttt{CRITICAL} error. \\
+
+Al igual que en el caso anterior, esto puede indicarnos un indicio de fallo en el regulador, una descarga parcial de corriente, un problema en el divisor de voltaje o un error del módulo CAEN. Por ello lanza un \texttt{CRITICAL} y no un \texttt{WARNING}. \\
+
+\subsubsection{Archivo: \texttt{voltage\_stability.py}}
+
+Aquí detectamos una inestabilidad en el voltaje medido, se calcula una desviación estándar $\sigma = \sqrt{\frac{1}{N-1}\sum_{i=1}^{N} (V_i - \bar V)^2}
+$ sobre una ventana. Nuevamente, si $\sigma > \text{umbral}$ se envía un \texttt{WARNING}.\\
+
+Una alarma de este tipo puede indicar; ripple, oscilación del regulador de voltaje, una conexión defectuosa, o ruido externo. Básicamente, mide la calidad del suministro eléctrico.\\
+
+En resumen, la capa de alarmas cumple con los siguientes principios de diseño:
+\begin{itemize}
+    \item Separación de responsabilidades (no interactúa con hardware).
+    \item Ausencia de efectos secundarios.
+    \item Encapsulamiento del estado temporal.
+    \item Independencia del backend.
+    \item Extensibilidad mediante herencia de \texttt{BaseAlarm}.
+\end{itemize}
+
+
+\subsection{Monitorización Pasiva: \texttt{AlarmManager}}
+
+El módulo \texttt{alarm\_manager.py} implementa un evaluador compuesto de alarmas que ejecuta de manera aislada un conjunto de condiciones sobre cada muestra adquirida, agregando sus resultados en un nivel global de severidad sin alterar el estado del sistema ni interactuar con el hardware.
+
+\subsubsection{Código de \texttt{alarm\_manager.py}}
+
+\begin{lstlisting}
+    # hv/alarm_manager.py
+
+from hv.alarms.base import AlarmLevel
+
+
+class AlarmManager:
+    """
+    Ejecuta un conjunto de alarmas sobre cada muestra (dict).
+
+    - No toma decisiones de apagado
+    - Devuelve resultados para logging o integración con watchdog
+    """
+
+    def __init__(self, alarms: list):
+        self.alarms = alarms
+
+    def evaluate(self, sample: dict):
+        """
+        Evalúa todas las alarmas sobre la muestra `sample` (dict)
+        Devuelve lista de tuplas (alarm_name, AlarmResult)
+        """
+        results = []
+        for alarm in self.alarms:
+            try:
+                result = alarm.evaluate(sample)
+                results.append((alarm.name, result))
+            except Exception:
+                # Nunca permitir que una alarma rompa el sistema
+                results.append((alarm.name, None))
+        return results
+
+    @staticmethod
+    def summarize(results):
+        """
+        Devuelve el nivel más alto detectado de una lista de resultados
+        """
+        level = AlarmLevel.OK
+        for _, result in results:
+            if result is None:
+                continue
+            if result.is_critical():
+                return AlarmLevel.CRITICAL
+            if result.is_warning():
+                level = AlarmLevel.WARNING
+        return level
+\end{lstlisting}
+
+\subsubsection{Archivo \texttt{alarm\_manager.py}}
+
+Del código, vemos que externamente lo único que importa es \texttt{AlarmLevel}. Esto nos dice que este script corrresponde a una capa lógica pura de evaluación. 
+
+\subsubsection{Clase \texttt{AlarmManager}}
+
+Corresponde a un coordinador, recibe alarmas no las define. 
+El constructor de estos es: 
+\begin{lstlisting}
+    def __init__(self, alarms: list):
+        self.alarms = alarms
+\end{lstlisting}
+
+Recibe una lista de objetos \" alarma \", los cuales deben tener:
+\texttt{alarm.name} y \texttt{alarm.evaluate(sample)}, el manager no sabe que tipo de alarma son, solo sabe que pueden evaluarse. \\
+
+El método principal de esta clase es \texttt{evaluate}:
+\begin{lstlisting}
+    def evaluate(self, sample: dict):
+\end{lstlisting}
+Este método recibe un \texttt{sample}, que es un diccionario. El manager sí no lo interpreta, solo lo pasa a cada alarma. La lógica interna: 
+\begin{lstlisting}
+    results = []
+for alarm in self.alarms:
+    try:
+        result = alarm.evaluate(sample)
+        results.append((alarm.name, result))
+    except Exception:
+        results.append((alarm.name, None))
+return results
+
+\end{lstlisting}
+hace tres cosas importantes:
+\begin{enumerate}
+    \item \textbf{Ejecuta todas las alarmas}: Cada alarma analiza la muestra y devuelve un resultado.
+    \item \textbf{Aisla errores}: Si una alarma lanza una excepción:
+    \begin{lstlisting}
+        except Exception:
+            results.append((alarm.name, None))
+    \end{lstlisting}
+    Entonces ninguna alarma puede romper el sistema completo.
+    Un resultado \texttt{None} representa fallo interno de la alarma y es tratado como ausencia de diagnóstico, sin alterar el nivel global.
+\end{enumerate}
+
+También tenemos el método \texttt{summarize}:
+\begin{lstlisting}
+    @staticmethod
+    def summarize(results):
+\end{lstlisting}
+Este método toma la lista de resultados y la reduce a un único nivel global.\\
+
+La lógica de este método comienza por asumir que todo está bien:
+\begin{lstlisting}
+    level = AlarmLevel.OK
+\end{lstlisting}
+Y luego:
+\begin{lstlisting}
+    for _, result in results:
+\end{lstlisting}
+Si el resultado es \texttt{None}, lo ignora.\\
+Si encuentra una crítica:
+\begin{lstlisting}
+    if result.is_critical():
+        return AlarmLevel.CRITICAL
+\end{lstlisting}
+Retorna inmediatamente, enfatizando que el nivel CRITICAL tiene prioridad absoluta.\\
+
+Si encuentra warning:
+\begin{lstlisting}
+    if result.is_warning():
+        level = AlarmLevel.WARNING
+\end{lstlisting}
+La documenta, pero sigue evaluando por si aparece una crítica después.\\
+Si no hay nada grave devuelve \texttt{AlarmLevel.OK}.\\
+
+Este diseño usa composición (lista de alarmas), separación de responsabilidades y agregación de resultados. Cada alarma es independiente, el manager solo coordina. Esto hace que se puedan agregar alarmas sin tocar el manager, quitar alarmas fácilmente y testear cada alarma por separado. 
+
+\subsection{Monitorización pasiva: \texttt{monitor.py}}
+
+En este módulo se implementa el monitor pasivo del sistema de alta tensión (HV). 
+Su responsabilidad es:
+
+\begin{itemize}
+    \item Tomar muestras periódicas del canal HV.
+    \item Evaluar condiciones de alarma mediante un \texttt{AlarmManager} externo.
+    \item Registrar eventos mediante el sistema de logging.
+    \item No ejecutar acciones de control ni modificar el estado del sistema.
+\end{itemize}
+
+Este módulo pertenece a la capa de observación y trazabilidad del sistema y no interviene en la lógica de seguridad activa.\\
+
+
+\subsubsection{Código de \texttt{monitor.py}}
+
+\begin{lstlisting}
+    # hv/monitor.py
+
+import time
+from datetime import datetime
+from collections import deque
+import logging
+
+from .state import HVState
+
+
+class HVSample:
+    """Muestra instantánea del sistema HV."""
+    def __init__(self, ts, vmon, imon, ramping, status):
+        self.ts = ts
+        self.vmon = vmon
+        self.imon = imon
+        self.ramping = ramping
+        self.status = status
+
+    def as_dict(self):
+        return {
+            "timestamp": self.ts,
+            "vmon": self.vmon,
+            "imon": self.imon,
+            "ramping": self.ramping,
+            "status": self.status,
+        }
+
+
+class HVMonitor:
+    """
+    Monitor pasivo de HV que:
+
+    - Toma muestras periódicas
+    - Evalúa alarmas usando AlarmManager externo
+    - No toma decisiones de apagado (solo logging)
+    """
+
+    def __init__(
+        self,
+        channel,
+        backend,
+        alarm_manager=None,
+        period=10,
+        buffer_size=360,
+        logger=None,
+    ):
+        self.channel = channel
+        self.backend = backend
+        self.alarm_manager = alarm_manager
+        self.period = period
+        self.samples = deque(maxlen=buffer_size)
+        self._running = False
+        self.logger = logger or logging.getLogger(f"HV.Monitor.CH{channel.ch}")
+
+    def sample(self):
+        """Toma una muestra y la almacena en el buffer."""
+        ts = datetime.now().isoformat()
+        vmon = self.channel.vmon()
+        imon = self.channel.imon()
+        status = self.backend.get_channel_status(self.channel.ch) or {}
+
+        # Ramping directo desde bits 2 y 4
+        stat = status.get("stat", 0)
+        ramping = bool(stat & 2) or bool(stat & 4)
+
+        # Crear objeto de muestra
+        sample = HVSample(ts, vmon, imon, ramping, status)
+        self.samples.append(sample)
+
+        # Evaluación de alarmas
+        if self.alarm_manager:
+            # Preparar dict coherente para todas las alarmas
+            sample_dict = sample.as_dict()
+            sample_dict["vset"] = self.channel.vset  # necesario para VoltageMismatchAlarm
+
+            results = self.alarm_manager.evaluate(sample_dict)
+            for name, result in results:
+                if result is None:
+                    continue
+                if result.is_critical():
+                    self.logger.critical(f"Alarma crítica [{name}]: {result.message}")
+
+        return sample
+
+    def run(self, callback=None):
+        """Loop principal del monitor."""
+        self._running = True
+        while self._running:
+            try:
+                sample = self.sample()
+                if callback:
+                    callback(sample)
+            except Exception as e:
+                self.logger.error(f"Error de muestreo: {e}")
+            time.sleep(self.period)
+
+    def stop(self):
+        self._running = False
+
+\end{lstlisting}
+
+\textbf{Nota}: Actualmente \texttt{HVState} no se utiliza dentro del monitor.
+
+\subsubsection{Clase \texttt{HVSample}}
+
+La clase \texttt{HVSample} modela una muestra instantánea del sistema de alta tensión. 
+Su función es encapsular en una estructura coherente los valores medidos en un instante dado.
+
+Contiene los siguientes atributos:
+
+\begin{itemize}
+    \item \texttt{ts}: timestamp en formato ISO 8601.
+    \item \texttt{vmon}: voltaje medido (VMON).
+    \item \texttt{imon}: corriente medida (IMON).
+    \item \texttt{ramping}: indicador booleano que señala si el canal se encuentra en proceso de rampa.
+    \item \texttt{status}: estructura de estado bruto retornada por el backend.
+\end{itemize}
+
+La separación en una clase evita la manipulación de estructuras dispersas y permite mantener coherencia semántica en la representación de una muestra.
+
+\paragraph{Método \texttt{as\_dict()}}
+
+Este método convierte la instancia en un diccionario estructurado. 
+Su propósito es:
+
+\begin{itemize}
+    \item Permitir serialización.
+    \item Facilitar almacenamiento o exportación.
+    \item Entregar una interfaz uniforme para el sistema de alarmas.
+\end{itemize}
+
+El \texttt{AlarmManager} opera sobre estructuras de datos genéricas, por lo que esta conversión desacopla la lógica de alarmas de la implementación interna del monitor.\\
+ 
+
+\subsubsection{Clase \texttt{HVMonitor}}
+
+La clase \texttt{HVMonitor} implementa el proceso de monitorización periódica de un canal HV. \\
+Sus responsabilidades son:
+
+\begin{itemize}
+    \item Obtener lecturas del canal.
+    \item Consultar el estado del backend.
+    \item Construir objetos \texttt{HVSample}.
+    \item Evaluar alarmas.
+    \item Registrar eventos críticos.
+\end{itemize}
+
+No realiza modificaciones sobre el canal ni ejecuta apagados.\\
+
+
+\subsubsection{Constructor}
+
+El constructor recibe los siguientes parámetros:
+
+\begin{itemize}
+    \item \texttt{channel}: interfaz de alto nivel del canal HV. Expone métodos como \texttt{vmon()}, \texttt{imon()} y el valor \texttt{vset}.
+    \item \texttt{backend}: interfaz de bajo nivel encargada de la comunicación con el hardware.
+    \item \texttt{alarm\_manager}: objeto opcional encargado de evaluar condiciones de alarma.
+    \item \texttt{period}: intervalo de muestreo en segundos.
+    \item \texttt{buffer\_size}: tamaño máximo del historial de muestras.
+    \item \texttt{logger}: instancia del sistema de logging.
+\end{itemize}
+
+\paragraph{Buffer circular}
+
+El historial de muestras se implementa mediante:
+
+\begin{lstlisting}
+self.samples = deque(maxlen=buffer_size)
+\end{lstlisting}
+
+\texttt{deque} con longitud máxima permite:
+
+\begin{itemize}
+    \item Mantener un historial acotado.
+    \item Controlar el uso de memoria.
+    \item Descartar automáticamente las muestras más antiguas.
+\end{itemize}
+
+Con \texttt{period = 10 s} y \texttt{buffer\_size = 360}, el historial corresponde aproximadamente a una hora de datos.\\
+
+\subsubsection{Método \texttt{sample()}}
+
+Este método implementa una iteración de muestreo. Su ejecución puede descomponerse en las siguientes etapas:
+
+\begin{enumerate}
+
+\item \textbf{Obtención de timestamp}
+
+\begin{lstlisting}
+ts = datetime.now().isoformat()
+\end{lstlisting}
+
+Se utiliza formato ISO 8601 para facilitar interoperabilidad y registro estructurado.
+
+\item \textbf{Lectura del canal}
+
+\begin{lstlisting}
+vmon = self.channel.vmon()
+imon = self.channel.imon()
+\end{lstlisting}
+
+El monitor obtiene voltaje y corriente a través de la interfaz del canal, sin acceder directamente al backend.
+
+\item \textbf{Consulta del estado del backend}
+
+\begin{lstlisting}
+status = self.backend.get_channel_status(self.channel.ch) or {}
+\end{lstlisting}
+
+Se obtiene el estado bruto del canal desde el backend. 
+La expresión \texttt{or \{\}} evita propagación de valores \texttt{None}.
+
+\item \textbf{Determinación del estado de rampa}
+
+\begin{lstlisting}
+stat = status.get("stat", 0)
+ramping = bool(stat & 2) or bool(stat & 4)
+\end{lstlisting}
+
+El campo \texttt{stat} corresponde a un registro de bits proveniente del módulo HV. 
+Los bits utilizados indican condición de rampa (subida o bajada). 
+El resultado se traduce a un valor booleano.
+
+\item \textbf{Construcción y almacenamiento de la muestra}
+
+\begin{lstlisting}
+sample = HVSample(ts, vmon, imon, ramping, status)
+self.samples.append(sample)
+\end{lstlisting}
+
+Se crea el objeto estructurado y se almacena en el buffer circular.
+
+\item \textbf{Evaluación de alarmas}
+
+Si existe un \texttt{alarm\_manager}, se prepara una estructura de datos homogénea:
+
+\begin{lstlisting}
+sample_dict = sample.as_dict()
+sample_dict["vset"] = self.channel.vset
+\end{lstlisting}
+
+El valor \texttt{vset} se agrega explícitamente porque ciertas alarmas requieren comparar voltaje medido con voltaje objetivo.
+
+Luego se ejecuta:
+
+\begin{lstlisting}
+results = self.alarm_manager.evaluate(sample_dict)
+\end{lstlisting}
+
+\item \textbf{Registro de eventos críticos}
+
+\begin{lstlisting}
+if result.is_critical():
+    self.logger.critical(...)
+\end{lstlisting}
+
+Si una alarma reporta condición crítica, se registra en el sistema de logging. 
+No se ejecutan acciones de control.
+    
+\end{enumerate}
+
+\subsubsection{Método \texttt{run()}}
+El método \texttt{run()} es bloqueante y está diseñado para ejecutarse en un hilo dedicado cuando se integra en sistemas concurrentes.
+Este método implementa el ciclo de monitorización continua:
+
+\begin{lstlisting}
+while self._running:
+\end{lstlisting}
+
+En cada iteración:
+
+\begin{itemize}
+    \item Se ejecuta \texttt{sample()}.
+    \item Opcionalmente se invoca un \texttt{callback}, El parámetro \texttt{callback} permite integrar el monitor con capas superiores (por ejemplo, interfaces gráficas, sistemas de adquisición o almacenamiento externo) sin modificar la implementación interna del monitor.
+    \item Se capturan excepciones para evitar la detención del monitor.
+    \item Se espera \texttt{period} segundos.
+\end{itemize}
+
+\paragraph{Manejo de excepciones}
+
+\begin{lstlisting}
+except Exception as e:
+    self.logger.error(...)
+\end{lstlisting}
+
+Cualquier error durante el muestreo es registrado, pero no interrumpe la ejecución del loop.
+
+
+\subsubsection{Método \texttt{stop()}}
+
+\begin{lstlisting}
+self._running = False
+\end{lstlisting}
+
+Este método permite finalizar el ciclo de monitorización de manera controlada.
+
+\subsection{Watchdog}
+
+El \texttt{HVWatchdog}es la capa de seguridad activa y autónoma del sistema. A diferencia del resto de capas, esta si toma decisiones físicas: puede foorzar un fallo (\texttt{FAULT}), puede apagar el canal, puede reiniciar el monitor. En resumen, es la única capa con autoridad ejecutiva. 
+
+\subsubsection{Código del Watchdog (\texttt{watchdog.py})} 
+\begin{lstlisting}
+    # hv/watchdog.py
+
+import time
+import logging
+from threading import Thread
+
+from .state import HVState
+from .safety import HVLimits
+
+
+class HVWatchdog:
+    """
+    Watchdog permanente y autónomo para canales HV.
+
+    - Monitorea backend, VMON/IMON y alarmas
+    - Supervisa HVMonitor y lo reinicia si deja de muestrear
+    - Apaga canales automáticamente ante fallos críticos
+    """
+
+    def __init__(
+        self,
+        hv_system,
+        check_period=2.0,
+        max_silence=10.0,
+        max_startup_time=30.0,
+        auto_shutdown=True,
+        monitor=None,
+        monitor_timeout=15.0,
+    ):
+        self.hv_system = hv_system
+        self.channels = hv_system.channels
+        self.check_period = check_period
+        self.max_silence = max_silence
+        self.max_startup_time = max_startup_time
+        self.auto_shutdown = auto_shutdown
+        self.monitor = monitor
+        self.monitor_timeout = monitor_timeout
+
+        self.logger = logging.getLogger("HV.Watchdog")
+
+        now = time.time()
+        self.last_ok = {ch.ch: now for ch in self.channels}
+        self.start_time = {ch.ch: None for ch in self.channels}
+        self.last_monitor_sample_time = now
+
+        self._watchdog_thread = None
+        self._running = False
+
+        self.logger.info(
+            "Watchdog inicializado. Monitor activo: %s",
+            monitor is not None
+        )
+
+    # ==========================================================
+    # CHECK DE CANAL
+    # ==========================================================
+    def _check_channel(self, ch):
+        now = time.time()
+
+        # ---------------------------
+        # Silencio del backend
+        # ---------------------------
+        dt_last_ok = now - self.last_ok.get(ch.ch, now)
+        if dt_last_ok > self.max_silence:
+            self._fault(ch, f"Sin respuesta del backend por {dt_last_ok:.1f}s")
+            return
+
+        # ---------------------------
+        # Lectura segura
+        # ---------------------------
+        try:
+            v = ch.vmon()
+            i = ch.imon()
+            status = ch.backend.get_channel_status(ch.ch)
+            self.last_ok[ch.ch] = now
+        except Exception as e:
+            self.logger.error(f"[CH{ch.ch}] Error leyendo canal: {e}")
+            return
+
+        # ---------------------------
+        # Estados ignorados
+        # ---------------------------
+        if ch.state in (HVState.OFF, HVState.ERROR, HVState.FAULT):
+            return
+
+        # ======================================================
+        # DETECCIÓN DE ENCENDIDO (RAMPING / TURNING_ON)
+        # ======================================================
+        if ch.state == HVState.RAMPING_UP:
+            if self.start_time[ch.ch] is None:
+                self.start_time[ch.ch] = now
+
+            elapsed = now - self.start_time[ch.ch]
+
+            if elapsed > self.max_startup_time:
+                self.logger.warning(
+                    f"[CH{ch.ch}] Encendido lento ({elapsed:.1f}s)"
+                )
+
+            return  # no checks críticos durante rampa
+
+        # ======================================================
+        # Canal ON estable
+        # ======================================================
+        if ch.state == HVState.ON:
+
+            # Resetear start_time porque ya terminó startup
+            self.start_time[ch.ch] = None
+
+            # VMON casi cero estando ON
+            if v < 5.0:
+                self._fault(ch, f"Canal ON pero VMON≈0 ({v:.2f} V)")
+                return
+
+            # Sobrecorriente software
+            if i > ch.iset * HVLimits.I_TRIP_FACTOR:
+                self._fault(ch, f"Sobrecorriente: IMON={i:.3e} A")
+                return
+
+            # Flags hardware
+            if status.get("kill") or status.get("interlock"):
+                self._fault(ch, f"Hardware KILL/INTERLOCK activo: {status}")
+                return
+
+            if status.get("ovc"):
+                self._fault(ch, "Overcurrent hardware detectado")
+                return
+
+        # ======================================================
+        # Alarmas externas (HVMonitor)
+        # ======================================================
+        if self.monitor:
+            try:
+                if self.monitor.samples:
+                    last_sample = self.monitor.samples[-1]
+                    self.last_monitor_sample_time = now
+
+                    sample_dict = last_sample.as_dict()
+                    sample_dict["vset"] = ch.vset
+
+                    results = self.monitor.alarm_manager.evaluate(sample_dict)
+
+                    for name, result in results:
+                        if result and result.is_critical():
+                            self._fault(
+                                ch,
+                                f"Alarma crítica [{name}]: {result.message}"
+                            )
+                            return
+
+            except Exception as e:
+                self.logger.error(
+                    f"[CH{ch.ch}] Error evaluando alarmas del monitor: {e}"
+                )
+
+    # ==========================================================
+    # MANEJO DE FALLOS
+    # ==========================================================
+    def _fault(self, ch, reason):
+        self.logger.critical(f"[CH{ch.ch}] FAULT: {reason}")
+
+        previous_state = ch.state
+        ch.state = HVState.FAULT
+
+        if self.auto_shutdown and previous_state == HVState.ON:
+            try:
+                ch.turn_off()
+                self.logger.critical(
+                    f"[CH{ch.ch}] Canal apagado por Watchdog"
+                )
+            except Exception as e:
+                self.logger.critical(
+                    f"[CH{ch.ch}] FALLO al apagar canal: {e}"
+                )
+
+    # ==========================================================
+    # SUPERVISIÓN DEL MONITOR
+    # ==========================================================
+    def _check_monitor(self):
+        if not self.monitor:
+            return
+
+        now = time.time()
+        dt = now - self.last_monitor_sample_time
+
+        if dt > self.monitor_timeout:
+            self.logger.warning(
+                f"HVMonitor sin muestras por {dt:.1f}s, reiniciando..."
+            )
+            try:
+                if hasattr(self.monitor, "stop"):
+                    self.monitor.stop()
+
+                Thread(
+                    target=self.monitor.run,
+                    daemon=True
+                ).start()
+
+                self.last_monitor_sample_time = time.time()
+
+            except Exception as e:
+                self.logger.error(
+                    f"Error reiniciando HVMonitor: {e}"
+                )
+
+    # ==========================================================
+    # LOOP PRINCIPAL
+    # ==========================================================
+    def _watchdog_loop(self):
+        self.logger.info("Watchdog loop iniciado")
+
+        while self._running:
+            try:
+                for ch in self.channels:
+                    try:
+                        self._check_channel(ch)
+                    except Exception as e:
+                        self.logger.critical(
+                            f"[CH{ch.ch}] Excepción en _check_channel: {e}"
+                        )
+
+                try:
+                    self._check_monitor()
+                except Exception as e:
+                    self.logger.critical(
+                        f"Excepción en _check_monitor: {e}"
+                    )
+
+                time.sleep(self.check_period)
+
+            except Exception as e:
+                self.logger.critical(
+                    f"Watchdog sufrió excepción crítica: {e}"
+                )
+                time.sleep(1)
+
+    # ==========================================================
+    # CONTROL EXTERNO
+    # ==========================================================
+    def start(self):
+        if not self._running:
+            self._running = True
+            self._watchdog_thread = Thread(
+                target=self._watchdog_loop,
+                daemon=True
+            )
+            self._watchdog_thread.start()
+            self.logger.info("Watchdog iniciado")
+
+    def stop(self):
+        self._running = False
+        if self._watchdog_thread:
+            self._watchdog_thread.join(timeout=2)
+            self.logger.info("Watchdog detenido")
+
+\end{lstlisting}
+
+\subsubsection{Diseño general del Watchdog}
+
+El watchdog corre en un \textbf{thread daemon}, que es un hilo de ejecución en segundo plano que no impide que el programa principal finalice.\\
+
+El watchdog se ejecuta periódicamente (\texttt{check\_period}).\\
+
+Este evalúa:
+\begin{itemize}
+    \item Respuesta del backend
+    \item Estado lógico del canal
+    \item \texttt{VMON/IMON}
+    \item Flags hardware
+    \item Alarmas externas
+    \item Silencio del monitor
+\end{itemize}
+Y ante una condición crítica: 
+\begin{lstlisting}
+    Estado = FAULT
+    Apaga canal (si auto_shutdown=True)
+\end{lstlisting}
+
+\subsubsection{Modelo de seguridad asumido}
+
+El watchdog asume:
+
+\begin{itemize}
+    \item El backend puede congelarse.
+    \item El hardware puede fallar silenciosamente.
+    \item El monitor puede detenerse.
+    \item El canal puede quedar en ON con VMON ≈ 0.
+\end{itemize}
+
+No cubre:
+\begin{itemize}
+    \item Fallos eléctricos externos (corte de energía).
+    \item Fallos físicos catastróficos del módulo.
+\end{itemize}
+
+\subsubsection{Análisis por secciones}
+
+\begin{enumerate}
+
+\item \textbf{Constructor \texttt{\_\_init\_\_}}
+
+El constructor inicializa el watchdog como entidad autónoma de supervisión activa. Recibe el sistema HV completo y parámetros de seguridad temporal.
+
+\begin{itemize}
+    \item \texttt{hv\_system}: contiene los canales a supervisar.
+    \item \texttt{check\_period}: período del loop principal.
+    \item \texttt{max\_silence}: tiempo máximo permitido sin respuesta del backend.
+    \item \texttt{max\_startup\_time}: tiempo máximo permitido en estado \texttt{RAMPING\_UP}.
+    \item \texttt{auto\_shutdown}: define si el watchdog puede apagar el canal automáticamente.
+    \item \texttt{monitor}: referencia opcional al \texttt{HVMonitor}.
+    \item \texttt{monitor\_timeout}: tiempo máximo sin muestras del monitor.
+\end{itemize}
+
+Se inicializan además estructuras internas de control temporal:
+
+\begin{itemize}
+    \item \texttt{last\_ok}: timestamp de última lectura válida por canal.
+    \item \texttt{start\_time}: momento en que comenzó el encendido.
+    \item \texttt{last\_monitor\_sample\_time}: última muestra recibida del monitor.
+\end{itemize}
+
+No ejecuta lógica de seguridad; solo prepara estado interno.
+
+\vspace{0.3cm}
+
+\item \textbf{Método \texttt{\_check\_channel(self, ch)}}
+
+Es el núcleo operativo del watchdog. Se ejecuta periódicamente para cada canal.
+
+\begin{enumerate}
+
+\item \textbf{Detección de silencio del backend}
+
+Calcula el tiempo transcurrido desde la última lectura válida:
+
+\begin{lstlisting}
+dt_last_ok = now - self.last_ok.get(ch.ch, now)
+\end{lstlisting}
+
+Si excede \texttt{max\_silence}, se considera congelamiento del backend y se llama a \texttt{\_fault}.
+
+\item \textbf{Lectura protegida del canal}
+
+Las lecturas de \texttt{vmon}, \texttt{imon} y estado hardware están protegidas con \texttt{try/except}.  
+Si fallan, se registra error pero no se dispara inmediatamente un \texttt{FAULT}.  
+Esto permite tolerancia ante fallos transitorios.
+
+\item \textbf{Estados ignorados}
+
+Si el canal está en:
+
+\begin{itemize}
+    \item \texttt{OFF}
+    \item \texttt{ERROR}
+    \item \texttt{FAULT}
+\end{itemize}
+
+No se realizan chequeos adicionales.
+
+\item \textbf{Estado \texttt{RAMPING\_UP}}
+
+Si el canal está encendiendo:
+
+\begin{itemize}
+    \item Se registra el tiempo de inicio.
+    \item Se calcula duración de rampa.
+    \item Si excede \texttt{max\_startup\_time}, se genera \texttt{WARNING}.
+\end{itemize}
+
+No se disparan fallos críticos durante rampa.
+
+\item \textbf{Estado \texttt{ON}}
+
+Una vez estable:
+
+\begin{enumerate}
+
+\item \textbf{VMON casi cero}
+
+Si:
+
+\begin{lstlisting}
+v < 5.0
+\end{lstlisting}
+
+Se considera inconsistencia grave y se dispara \texttt{FAULT}.
+
+\item \textbf{Sobrecorriente software}
+
+Si:
+
+\begin{lstlisting}
+i > ch.iset * HVLimits.I_TRIP_FACTOR
+\end{lstlisting}
+
+Se dispara \texttt{FAULT}.  
+Esto implementa redundancia respecto al hardware.
+
+\item \textbf{Flags hardware críticos}
+
+Si el backend reporta:
+
+\begin{itemize}
+    \item \texttt{kill}
+    \item \texttt{interlock}
+    \item \texttt{ovc}
+\end{itemize}
+
+Se dispara \texttt{FAULT} inmediatamente.
+
+\end{enumerate}
+
+\item \textbf{Evaluación de alarmas externas}
+
+Si existe \texttt{monitor}, se toman las últimas muestras y se evalúan alarmas.
+
+Solo si una alarma devuelve \texttt{CRITICAL} se llama a \texttt{\_fault}.  
+Los \texttt{WARNING} no generan apagado.
+
+\end{enumerate}
+
+\vspace{0.3cm}
+
+\item \textbf{Método \texttt{\_fault(self, ch, reason)}}
+
+Gestiona el fallo crítico.
+
+\begin{enumerate}
+
+\item Registra mensaje \texttt{CRITICAL}.
+\item Cambia el estado lógico del canal a \texttt{FAULT}.
+\item Si \texttt{auto\_shutdown=True} y el canal estaba en \texttt{ON}:
+    \begin{itemize}
+        \item Ejecuta \texttt{ch.turn\_off()}.
+        \item Registra evento de apagado.
+    \end{itemize}
+\item Si el apagado falla, registra error crítico adicional.
+\end{enumerate}
+
+Implementa transición segura a estado fail-safe.
+
+\vspace{0.3cm}
+
+\item \textbf{Método \texttt{\_check\_monitor(self)}}
+
+Supervisa el funcionamiento del \texttt{HVMonitor}.
+
+\begin{enumerate}
+
+\item Calcula tiempo desde última muestra.
+\item Si excede \texttt{monitor\_timeout}:
+    \begin{itemize}
+        \item Registra \texttt{WARNING}.
+        \item Intenta detener el monitor.
+        \item Lanza un nuevo thread ejecutando \texttt{monitor.run()}.
+        \item Reinicia contador temporal.
+    \end{itemize}
+\end{enumerate}
+
+Permite autorreparación del sistema de monitorización pasiva.
+
+\vspace{0.3cm}
+
+\item \textbf{Método \texttt{\_watchdog\_loop(self)}}
+
+Loop principal del watchdog.
+
+\begin{enumerate}
+
+\item Itera mientras \texttt{\_running=True}.
+\item Para cada canal ejecuta \texttt{\_check\_channel}.
+\item Ejecuta \texttt{\_check\_monitor}.
+\item Espera \texttt{check\_period}.
+\end{enumerate}
+
+Incluye múltiples niveles de \texttt{try/except} para evitar que el watchdog termine por excepción inesperada.
+
+\vspace{0.3cm}
+
+\item \textbf{Métodos de control externo}
+
+\begin{enumerate}
+
+\item \texttt{start()}:
+    \begin{itemize}
+        \item Activa bandera interna.
+        \item Crea thread daemon.
+        \item Inicia ejecución del loop.
+    \end{itemize}
+
+\item \texttt{stop()}:
+    \begin{itemize}
+        \item Desactiva bandera.
+        \item Hace \texttt{join(timeout=2)}.
+    \end{itemize}
+
+\end{enumerate}
+
+Permiten control limpio del ciclo de vida del watchdog.
+
+\end{enumerate}
+
+\subsubsection{Simplificaciones de concurrencia}
+
+El sistema actual utiliza un hilo independiente (daemon thread) para el
+Watchdog, el cual accede al buffer `monitor.samples` mientras el monitor
+puede estar escribiendo nuevas muestras.
+
+No se utilizan mecanismos explícitos de sincronización (e.g., locks),
+ya que:
+
+\begin{itemize}
+    \item El acceso es solo lectura desde el Watchdog.
+    \item El contenedor `deque` en CPython ofrece operaciones atómicas
+    para inserciones simples.
+    \item El riesgo de condición de carrera se considera aceptable
+    dado el contexto experimental y la frecuencia baja de muestreo.
+\end{itemize}
+
+Esta decisión simplifica la arquitectura a costa de no garantizar
+thread-safety formal bajo implementaciones alternativas del intérprete.
+
+\subsubsection{Limitaciones del modelo de seguridad}
+
+El Watchdog no protege frente a:
+
+\begin{itemize}
+    \item Bloqueos indefinidos en llamadas I/O del backend
+    \item Fallos del intérprete o del sistema operativo
+    \item Corrupción de memoria
+\end{itemize}
+
+El modelo asume que las llamadas a backend poseen timeout
+configurado y retornan control al sistema.
+
+
+\subsection{Capa de persistencia mínima del estado lógico del sistema: \texttt{state\_manager.py}}
+
+El \texttt{HVStateManager} no controla hardware, no evalúa alarmas, no ejecuta lógica. Su función es:
+\textbf{persistir el estado lógico de los canales para recuperación posterior}. Es una capa de durabilidad, no de control.\\
+
+\subsubsection{Código de \texttt{state\_manager.py}}
+
+\begin{lstlisting}
+    # hv/state_manager.py
+import json
+from pathlib import Path
+from datetime import datetime
+from .state import HVState
+
+class HVStateManager:
+    def __init__(self, path="hv_state.json"):
+        self.path = Path(path)
+
+    def save(self, channels):
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "channels": {}
+        }
+
+        for ch in channels:
+            data["channels"][str(ch.ch)] = {
+                "state": ch.state.name,
+                "vset": ch.vset,
+                "iset": ch.iset,
+                "ramp_up": ch.rup,
+                "last_vmon": getattr(ch, "last_vmon", None),
+                "last_imon": getattr(ch, "last_imon", None),
+            }
+
+        tmp = self.path.with_suffix(".tmp")
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+
+        tmp.replace(self.path)
+
+    def load(self):
+        if not self.path.exists():
+            return None
+
+        with open(self.path) as f:
+            return json.load(f)
+\end{lstlisting}
+
+\subsubsection{Clase \texttt{HVStateManager}}
+
+La clase \texttt{HVStateManager} implementa una capa mínima de persistencia del
+estado lógico del sistema HV. Su responsabilidad es almacenar y recuperar
+información relevante de los canales, permitiendo reconstruir el estado del
+sistema tras un reinicio o fallo del programa.
+
+No ejecuta lógica de control ni toma decisiones físicas.  
+No interactúa con el backend ni con el hardware.  
+
+Su única función es serializar y deserializar información en formato JSON,
+manteniendo separación clara entre persistencia y control.
+
+\subsubsection{Método \texttt{save(self, channels)}}
+
+Este método construye una representación serializable del estado actual
+de los canales y la escribe de forma segura en disco.
+
+\paragraph{Construcción del payload}
+
+Se construye un diccionario principal con la siguiente estructura:
+
+\begin{itemize}
+    \item \texttt{timestamp}: fecha y hora actual en formato ISO 8601.
+    \item \texttt{channels}: diccionario indexado por número de canal.
+\end{itemize}
+
+El uso de \texttt{datetime.now().isoformat()} garantiza un formato estándar,
+legible y portable.
+
+\paragraph{Serialización por canal}
+
+Para cada canal se almacenan únicamente valores primitivos compatibles con JSON:
+
+\begin{itemize}
+    \item \texttt{state}: nombre del enum (\texttt{ch.state.name}).
+    \item \texttt{vset}: voltaje programado.
+    \item \texttt{iset}: corriente límite programada.
+    \item \texttt{ramp\_up}: velocidad de rampa.
+    \item \texttt{last\_vmon}: último voltaje medido (si existe).
+    \item \texttt{last\_imon}: última corriente medida (si existe).
+\end{itemize}
+
+El estado se guarda como texto en lugar de guardar directamente el objeto
+\texttt{HVState}, evitando problemas de serialización.
+
+El uso de \texttt{getattr(..., None)} introduce tolerancia ante cambios en la
+implementación del canal, evitando excepciones si los atributos no existen.
+
+\paragraph{Escritura atómica}
+
+La escritura del archivo se realiza en dos etapas:
+
+\begin{enumerate}
+    \item Se escribe primero en un archivo temporal con extensión \texttt{.tmp}.
+    \item Luego se reemplaza el archivo original mediante \texttt{Path.replace()}.
+\end{enumerate}
+
+Este mecanismo reduce el riesgo de corrupción del archivo si el programa se
+interrumpe durante la escritura, garantizando que el archivo final sea
+siempre consistente o el anterior permanezca intacto.
+
+\subsubsection{Método \texttt{load(self)}}
+
+El método \texttt{load} permite recuperar el estado previamente almacenado.
+
+Su comportamiento es deliberadamente simple:
+
+\begin{itemize}
+    \item Si el archivo no existe, devuelve \texttt{None}.
+    \item Si existe, carga el contenido JSON y lo devuelve como diccionario.
+\end{itemize}
+
+No reconstruye objetos ni modifica el sistema directamente.  
+La responsabilidad de interpretar los datos cargados y restaurar el estado
+de los canales recae en una capa superior del sistema (por ejemplo,
+\texttt{hv\_run.py}).
+
+Esta decisión mantiene separación de responsabilidades entre:
+
+\begin{itemize}
+    \item Persistencia de datos.
+    \item Lógica de reconstrucción del sistema.
+\end{itemize}
+
+Se opta por:
+\begin{itemize}
+    \item Formato JSON por su legibilidad y portabilidad.
+    \item Almacenamiento de valores primitivos para evitar acoplamiento fuerte con clases internas.
+    \item No restaurar automáticamente estados para evitar efectos laterales no controlados.
+\end{itemize}
+
+
+
+\subsection{Supervisión lógica y protección dinámica del sistema: \texttt{watchdog.py}}
+
+El módulo \texttt{watchdog.py} implementa la capa de supervisión activa del sistema
+de alto voltaje. Su función es monitorear periódicamente el estado lógico y físico
+de los canales HV, detectar condiciones anómalas y ejecutar acciones de protección
+cuando corresponda.
+
+A diferencia de \texttt{HVStateManager}, este módulo participa directamente en la
+operación del sistema. No implementa el backend de hardware ni define la máquina
+de estados, sino que verifica que ambas se comporten de manera coherente y segura
+durante la operación.
+
+\subsubsection{Código del módulo \texttt{watchdog.py}}
+
+\begin{lstlisting}[language=Python]
+# hv/watchdog.py
+
+import time
+import logging
+import os
+from multiprocessing import Process, Pipe
+from threading import Thread
+from collections import deque
+
+from .state import HVState
+from .safety import HVLimits
+
+
+# ==========================================================
+# DEADMAN PROCESS (GIL SAFE)
+# ==========================================================
+
+def _deadman_process(conn, timeout):
+    last_tick = time.monotonic()
+
+    while True:
+        if conn.poll(0.5):
+            try:
+                conn.recv()
+                last_tick = time.monotonic()
+            except EOFError:
+                break
+
+        if time.monotonic() - last_tick > timeout:
+            print("DEADMAN TRIGGERED - HARD EXIT")
+            os._exit(1)
+
+
+# ==========================================================
+# WATCHDOG INDUSTRIAL
+# ==========================================================
+
+class HVWatchdog:
+
+    # ================================
+    # PARÁMETROS FÍSICOS
+    # ================================
+
+    DV_DT_LIMIT = 200.0       # V/s (ajustable)
+    ENERGY_WINDOW = 5.0       # segundos
+    ENERGY_MAX = 0.5          # Joules acumulados en ventana
+
+    VMON_ZERO_THRESHOLD = 5.0
+    VMON_ZERO_TIME = 2.0
+
+    DRIFT_REL_TOL = 0.15
+    DRIFT_TIME = 2.0
+
+    def __init__(
+        self,
+        hv_system,
+        check_period=0.5,
+        max_silence=10.0,
+        auto_shutdown=True,
+        arduino_serial=None,
+    ):
+
+        self.hv_system = hv_system
+        self.channels = hv_system.channels
+        self.check_period = check_period
+        self.max_silence = max_silence
+        self.auto_shutdown = auto_shutdown
+
+        self.logger = logging.getLogger("HV.Watchdog")
+
+        now = time.monotonic()
+
+        # =========================
+        # Estado temporal
+        # =========================
+        self.last_ok = {ch.ch: now for ch in self.channels}
+        self.prev_sample = {ch.ch: None for ch in self.channels}
+
+        self._vmon_zero_start = {ch.ch: None for ch in self.channels}
+        self._drift_start = {ch.ch: None for ch in self.channels}
+
+        # Energía acumulada
+        self.energy_buffer = {
+            ch.ch: deque() for ch in self.channels
+        }
+
+        # =========================
+        # Arduino supervisor
+        # =========================
+        self.arduino = arduino_serial
+
+        # =========================
+        # Deadman multiproceso
+        # =========================
+        self._DEADMAN_TIMEOUT = 3 * check_period
+        self._deadman_parent_conn = None
+        self._deadman_process = None
+
+        self._running = False
+        self._thread = None
+
+        self.logger.info("HVWatchdog Industrial inicializado.")
+
+
+    # ======================================================
+    # FSM INVARIANTS
+    # ======================================================
+
+    def _verify_fsm_invariants(self, ch, status):
+
+        if ch.state == HVState.ON and not status.get("on", False):
+            self._fault(ch, "FSM violation: ON pero hardware no ON")
+
+
+    # ======================================================
+    # PROTECCIÓN DINÁMICA
+    # ======================================================
+
+    def _dynamic_protection(self, ch, v, i, now):
+
+        prev = self.prev_sample[ch.ch]
+
+        if prev is not None:
+
+            dt = now - prev["t"]
+            if dt > 0:
+
+                dv = v - prev["v"]
+                dv_dt = dv / dt
+
+                # dV/dt
+                if abs(dv_dt) > self.DV_DT_LIMIT:
+                    self._fault(ch, f"dV/dt excesivo {dv_dt:.1f} V/s")
+                    return
+
+                # Energía acumulada
+                power = v * i
+                energy = power * dt
+
+                buf = self.energy_buffer[ch.ch]
+                buf.append((now, energy))
+
+                # Limpiar ventana
+                while buf and (now - buf[0][0] > self.ENERGY_WINDOW):
+                    buf.popleft()
+
+                total_energy = sum(e for _, e in buf)
+
+                if total_energy > self.ENERGY_MAX:
+                    self._fault(ch, f"Energía acumulada alta {total_energy:.3f} J")
+                    return
+
+        self.prev_sample[ch.ch] = {"v": v, "t": now}
+
+
+    # ======================================================
+    # CHECK CANAL
+    # ======================================================
+
+    def _check_channel(self, ch):
+
+        now = time.monotonic()
+
+        if now - self.last_ok[ch.ch] > self.max_silence:
+            self._fault(ch, "Backend silencioso")
+            return
+
+        try:
+            v = ch.vmon()
+            i = ch.imon()
+            status = ch.backend.get_channel_status(ch.ch)
+            self.last_ok[ch.ch] = now
+        except Exception as e:
+            self.logger.error(f"[CH{ch.ch}] Error lectura: {e}")
+            return
+
+        self._verify_fsm_invariants(ch, status)
+
+        if ch.state == HVState.ON:
+
+            # VMON≈0
+            if v < self.VMON_ZERO_THRESHOLD:
+                if self._vmon_zero_start[ch.ch] is None:
+                    self._vmon_zero_start[ch.ch] = now
+                elif now - self._vmon_zero_start[ch.ch] > self.VMON_ZERO_TIME:
+                    self._fault(ch, "VMON≈0 persistente")
+                    return
+            else:
+                self._vmon_zero_start[ch.ch] = None
+
+            # Drift
+            rel_error = abs(v - ch.vset) / abs(ch.vset)
+            if rel_error > self.DRIFT_REL_TOL:
+                if self._drift_start[ch.ch] is None:
+                    self._drift_start[ch.ch] = now
+                elif now - self._drift_start[ch.ch] > self.DRIFT_TIME:
+                    self._fault(ch, "Drift persistente")
+                    return
+            else:
+                self._drift_start[ch.ch] = None
+
+            # Sobrecorriente
+            if i > ch.iset * HVLimits.I_TRIP_FACTOR:
+                self._fault(ch, "Sobrecorriente software")
+                return
+
+            # Protección dinámica
+            self._dynamic_protection(ch, v, i, now)
+
+
+    # ======================================================
+    # FAULT
+    # ======================================================
+
+    def _fault(self, ch, reason):
+
+        self.logger.critical(f"[CH{ch.ch}] FAULT: {reason}")
+
+        ch.state = HVState.FAULT
+
+        if self.auto_shutdown:
+            try:
+                ch.turn_off()
+            except:
+                pass
+
+
+    # ======================================================
+    # LOOP
+    # ======================================================
+
+    def _loop(self):
+
+        while self._running:
+
+            # Heartbeat proceso
+            if self._deadman_parent_conn:
+                self._deadman_parent_conn.send(1)
+
+            # Heartbeat Arduino
+            if self.arduino:
+                try:
+                    self.arduino.write(b"HEARTBEAT\n")
+                except:
+                    pass
+
+            for ch in self.channels:
+                self._check_channel(ch)
+
+            time.sleep(self.check_period)
+
+
+    # ======================================================
+    # CONTROL
+    # ======================================================
+
+    def start(self):
+
+        if self._running:
+            return
+
+        self._running = True
+
+        parent, child = Pipe()
+        self._deadman_parent_conn = parent
+
+        self._deadman_process = Process(
+            target=_deadman_process,
+            args=(child, self._DEADMAN_TIMEOUT),
+            daemon=True
+        )
+        self._deadman_process.start()
+
+        self._thread = Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+        self.logger.info("Watchdog Industrial iniciado.")
+
+
+    def stop(self):
+
+        self._running = False
+
+        if self._deadman_process:
+            self._deadman_process.terminate()
+
+        self.logger.info("Watchdog detenido.")
+
+\end{lstlisting}
+
+\subsubsection{Estructura funcional del módulo}
+
+El archivo contiene dos componentes principales:
+
+\paragraph{1. Función \texttt{\_deadman\_process}}
+
+Es un proceso independiente creado mediante \texttt{multiprocessing}. Su
+responsabilidad es monitorear la recepción periódica de señales (heartbeat)
+desde el proceso principal.
+
+No evalúa variables físicas ni interpreta estados lógicos. Si no recibe señal
+dentro de un intervalo de tiempo mayor que el permitido, ejecuta:
+
+\begin{verbatim}
+os._exit(1)
+\end{verbatim}
+
+forzando la terminación inmediata del programa. Esta decisión evita que el
+sistema permanezca energizado en caso de bloqueo total del proceso principal.
+
+\paragraph{2. Clase \texttt{HVWatchdog}}
+
+La clase \texttt{HVWatchdog} implementa el ciclo de supervisión periódica.
+Opera en un hilo independiente y realiza las siguientes tareas:
+
+\begin{itemize}
+\item Verificación de coherencia entre estado lógico y estado físico.
+\item Evaluación de variables físicas medidas (VMON e IMON).
+\item Detección de condiciones anómalas persistentes.
+\item Declaración de estado \texttt{FAULT} cuando corresponde.
+\item Envío periódico de heartbeat al proceso Deadman.
+\end{itemize}
+
+Internamente mantiene estructuras auxiliares para almacenar muestras previas,
+integrar energía en ventana deslizante y detectar condiciones sostenidas
+en el tiempo.
+
+\subsubsection{Supervisión lógica}
+
+El watchdog verifica que el estado lógico definido por la máquina de estados
+sea consistente con el estado físico reportado por el backend.
+
+Por ejemplo, si un canal se encuentra en estado \texttt{ON} pero el backend
+indica que no está energizado, se declara estado \texttt{FAULT}. Esta
+verificación previene desincronizaciones entre software y hardware.
+
+\subsubsection{Protección basada en variables físicas}
+
+Cuando un canal se encuentra en estado \texttt{ON}, se evalúan condiciones
+adicionales sobre las magnitudes medidas.
+
+\paragraph{Derivada temporal del voltaje}
+
+Se estima la variación de VMON entre muestras consecutivas. Si el cambio
+supera un umbral predefinido:
+
+\[
+\left| \frac{dV}{dt} \right| > \texttt{DV\_DT\_LIMIT}
+\]
+
+se considera evento anómalo. Esta condición permite detectar descargas
+abruptas o transitorios no esperados.
+
+\paragraph{Energía acumulada}
+
+Se calcula la potencia instantánea:
+
+\[
+P(t) = V(t) I(t)
+\]
+
+y se integra en una ventana deslizante de duración fija. Si la energía
+acumulada supera el máximo permitido, se ejecuta apagado preventivo.
+Este criterio limita la exposición prolongada a condiciones de alta disipación.
+
+\paragraph{VMON cercano a cero}
+
+Si el canal está en estado \texttt{ON} pero el voltaje medido permanece bajo
+un umbral mínimo durante un intervalo sostenido, se considera fallo de
+regulación o condición anómala persistente.
+
+\paragraph{Drift relativo}
+
+Se evalúa la desviación relativa entre VMON y VSET:
+
+\[
+\frac{|V - V_{set}|}{|V_{set}|} > \texttt{DRIFT\_REL\_TOL}
+\]
+
+Si esta condición se mantiene durante un tiempo definido, se declara
+deriva anómala.
+
+\paragraph{Sobrecorriente software}
+
+Se compara IMON con ISET. Si la corriente supera un factor de tolerancia
+definido, puede ejecutarse apagado automático, introduciendo redundancia
+respecto a las protecciones internas del módulo HV.
+
+\subsubsection{Deadman Timer}
+
+El sistema incorpora un mecanismo de \emph{Deadman Timer} multinivel,
+diseñado para garantizar la terminación segura del proceso de control HV
+incluso ante bloqueos graves (deadlocks, cuelgues del intérprete,
+fallos de I/O o corrupción del estado interno).
+
+El diseño implementa tres capas complementarias:
+
+\paragraph{1. Supervisión por proceso independiente}
+
+El \texttt{HVWatchdog} crea un proceso hijo dedicado exclusivamente a
+supervisar la vitalidad del proceso principal. La comunicación se realiza
+mediante un \texttt{Pipe}, por el cual el proceso principal envía pulsos
+periódicos (\emph{heartbeat}).
+
+El proceso supervisor mide el tiempo transcurrido desde el último pulso.
+Si el intervalo supera el umbral configurado, ejecuta:
+
+\begin{verbatim}
+os._exit(1)
+\end{verbatim}
+
+El uso de \texttt{os.\_exit()} evita cualquier limpieza del intérprete,
+garantizando terminación inmediata incluso si el GIL está bloqueado.
+
+\paragraph{2. Hilo supervisor interno}
+
+Adicionalmente, el sistema incorpora un hilo de supervisión interno que
+monitorea:
+
+\begin{itemize}
+    \item Actualización efectiva de VMON/IMON.
+    \item Progreso de estados (OFF $\rightarrow$ ARMED $\rightarrow$ ON).
+    \item Detección de estancamiento en estados de \texttt{RAMPING}.
+\end{itemize}
+
+Esto permite detectar condiciones lógicas anómalas aun cuando el proceso
+principal continúe ejecutándose.
+
+\paragraph{3. Protección futura por hardware externo}
+
+Se planifica la integración de un microcontrolador (\emph{Arduino})
+como capa física independiente. Este dispositivo recibirá una señal
+periódica desde el sistema principal.
+
+En ausencia de dicha señal dentro del intervalo configurado,
+el microcontrolador ejecutará un corte físico de la línea de habilitación
+del módulo HV.
+
+Esta tercera capa introduce una separación completa entre:
+
+\begin{itemize}
+    \item Software de control
+    \item Sistema operativo
+    \item Protección física del detector
+\end{itemize}
+
+El objetivo es garantizar que ningún fallo software pueda mantener
+el sistema HV energizado de forma indefinida.
+
+
+\subsubsection{Criterios de diseño}
+
+Se opta por:
+
+\begin{itemize}
+\item Separar supervisión activa y persistencia de estado.
+\item Implementar detección basada en umbrales instantáneos y condiciones sostenidas.
+\item Utilizar un proceso independiente para garantizar terminación ante bloqueo.
+\item Mantener el módulo desacoplado del backend específico.
+\end{itemize}
+
+Esta arquitectura complementa el interlock físico del módulo HV y añade
+una capa de protección basada en coherencia lógica y comportamiento dinámico.
+
+\section{Configuración del repositorio en GitHub}
+
+\subsection{Transferencia de código desde Raspberry a Windows}
+
+\textbf{Fecha:} 2026-03-08 \\
+\textbf{Objetivo:} Copiar la carpeta del proyecto \texttt{ConfCAENmodule} desde la Raspberry al PC Windows para inicializar un repositorio GitHub.
+
+\textbf{Procedimiento:}
+
+\begin{enumerate}
+    \item Verificar la ubicación del proyecto en la Raspberry:
+    \begin{verbatim}
+/home/pi/ConfCAENmodule
+    \end{verbatim}
+    
+    \item Usar \texttt{scp} desde Windows para transferir la carpeta completa:
+    \begin{verbatim}
+scp -r pi@192.168.1.50:/home/pi/ConfCAENmodule C:\Users\ignac\OneDrive\Desktop\
+    \end{verbatim}
+
+    \item Verificar la estructura del proyecto en Windows:
+    \begin{verbatim}
+ConfCAENmodule/
+│   clear_alarms.py
+│   hv_run.py
+│   hv_state.json
+├── hv/
+│   ├─ alarms/
+│   ├─ backend/
+│   └─ __pycache__/
+└── logs/
+    \end{verbatim}
+\end{enumerate}
+
+\textbf{Observaciones:} 
+\begin{itemize}
+    \item Windows 11 no permite crear archivos que empiecen con punto desde el explorador.
+    \item Todos los archivos se copiaron correctamente, incluyendo subcarpetas y logs.
+\end{itemize}
+
+\subsection{Creación del archivo .gitignore}
+
+\textbf{Fecha:} 2026-03-08 \\
+\textbf{Objetivo:} Evitar subir archivos innecesarios al repositorio GitHub (logs y caches de Python).
+
+\textbf{Procedimiento:}
+
+\begin{enumerate}
+    \item Abrir PowerShell dentro de la carpeta del proyecto:
+    \begin{verbatim}
+cd C:\Users\ignac\OneDrive\Desktop\ConfCAENmodule
+    \end{verbatim}
+
+    \item Crear archivo \texttt{.gitignore}:
+    \begin{verbatim}
+New-Item -Path . -Name ".gitignore" -ItemType "File"
+    \end{verbatim}
+
+    \item Editar \texttt{.gitignore} con Notepad:
+    \begin{verbatim}
+notepad .gitignore
+    \end{verbatim}
+
+    \item Contenido recomendado:
+    \begin{verbatim}
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+logs/
+*.log
+*.csv
+
+# Entornos virtuales
+venv/
+.env
+    \end{verbatim}
+\end{enumerate}
+
+\textbf{Observaciones:} 
+\begin{itemize}
+    \item Se debe llamar exactamente \texttt{.gitignore}, no \texttt{ConfCAENmodule.gitignore}.
+    \item Este archivo asegura que Git ignore los archivos temporales y logs al hacer commits.
+\end{itemize}
+
+\subsection{Instalación de Git en Windows 11}
+
+\textbf{Fecha:} 2026-03-08 \\
+\textbf{Objetivo:} Instalar Git en Windows 11 y configurarlo para poder trabajar con el proyecto \texttt{ConfCAENmodule} desde PowerShell y Visual Studio Code.
+
+\textbf{Procedimiento:}
+
+\begin{enumerate}
+    \item Descargar Git para Windows desde la página oficial: \url{https://git-scm.com/download/win}.
+    
+    \item Ejecutar el instalador y seleccionar las siguientes opciones durante la instalación:
+    \begin{itemize}
+        \item \textbf{Editor predeterminado de Git:} \textbf{Visual Studio Code}.
+        \item \textbf{Nombre de la rama inicial:} \textbf{main}.
+        \item \textbf{Cliente SSH:} \textbf{Use bundled OpenSSH}.
+        \item \textbf{HTTPS transport backend:} \textbf{OpenSSL library}.
+        \item \textbf{Conversión de finales de línea:} \textbf{Checkout Windows-style, commit Unix-style (CRLF → LF)}.
+        \item \textbf{Terminal emulator:} \textbf{MinTTY (default Git Bash terminal)}.
+        \item \textbf{Comportamiento por defecto de \texttt{git pull}:} \textbf{merge}.
+        \item \textbf{File system caching:} Activado.
+        \item \textbf{Symbolic links:} Desactivado.
+    \end{itemize}
+
+    \item Finalizar la instalación y reiniciar PowerShell para que reconozca Git.
+    
+    \item Verificar la instalación ejecutando en PowerShell:
+    \begin{verbatim}
+git --version
+    \end{verbatim}
+    - Se espera una salida como: \texttt{git version 2.42.0.windows.1}.
+\end{enumerate}
+
+\textbf{Observaciones:}
+\begin{itemize}
+    \item Git está ahora disponible desde PowerShell, CMD y cualquier software de terceros como Visual Studio Code.
+    \item La configuración elegida garantiza compatibilidad con Windows 11 y la Raspberry Pi.
+    \item No se activó ningún servidor ni puerto SSH; Git solo usará SSH para conectarse a repositorios remotos.
+\end{itemize}
+
+18 de Marzo de 2026, me pitié la CAEN. 
+
+\end{document}
+
+
