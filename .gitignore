@@ -6,9 +6,16 @@ __pycache__/
 
 # Logs
 logs/
+logs_mock/
 *.log
 *.csv
 
 # Entornos virtuales
 venv/
 .env
+
+# Archivos LaTeX (bitácoras, documentos temporales)
+*.tex
+
+# Archivos de estado temporal
+hv_state.json
