@@ -225,14 +225,16 @@ El conector SHV es el estándar industrial para HV en detectores de física de p
 
 ## Parámetros Eléctricos Nominales del Sistema
 
-| Parámetro              | Valor nominal   | Límite software  | Límite hardware |
-|------------------------|-----------------|------------------|-----------------|
-| Voltaje de operación   | 1350 V          | 1475 V (V_SAFE)  | 1500 V (V_MAX)  |
-| Corriente PMT          | ~85 μA (típica) | 100 μA (I_SAFE)  | 120 μA (×1.2 ISET) |
-| Potencia por canal     | ~0.115 W        | 3.4 W (P_SAFE_CH)| 4.0 W (P_MAX_CH)|
-| Velocidad de rampa     | 25 V/s          | —                | —               |
-| Tiempo de rampa 0→1350 V | ~54 s         | 60 s (timeout)   | —               |
-| Ripple de HV           | < 5 mV p-p      | —                | < 5 mV p-p      |
+| Parámetro              | Valor nominal   | Límite software  | Límite hardware  |
+|------------------------|-----------------|------------------|------------------|
+| Voltaje de operación   | 1350 V          | 1475 V (V_SAFE)  | 1500 V (V_MAX)   |
+| Corriente PMT          | ~85 μA (típica) | 100 μA (I_SAFE)  | OVC hardware CAEN |
+| Potencia por canal     | ~0.115 W        | 3.4 W (P_SAFE_CH)| 4.0 W (P_MAX_CH) |
+| Velocidad de rampa     | 25 V/s          | —                | —                |
+| Tiempo de rampa 0→1350 V | ~54 s         | 60 s (timeout)   | —                |
+| Ripple de HV           | < 5 mV p-p      | —                | < 5 mV p-p       |
+
+> **Nota**: El disparo software de sobrecorriente se produce cuando `IMON > ISET × 1.2` (120 % del valor configurado), implementado en el `HVWatchdog`. La protección OVC del hardware CAEN actúa directamente sobre el límite `ISET` configurado en el módulo. Ambas protecciones son independientes y complementarias.
 
 ---
 

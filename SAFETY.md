@@ -55,7 +55,7 @@ La clase `HVLimits` define constantes que se aplican **antes** de enviar cualqui
 | `V_MAX`        | 1500 V   | Voltaje máximo absoluto del PMT                   |
 | `V_SAFE`       | 1475 V   | Límite operativo (derating 85 %)                  |
 | `I_MAX`        | 100 μA   | Corriente máxima absoluta del PMT                 |
-| `I_SAFE`       | 100 μA   | Límite operativo (derating 100 %)                 |
+| `I_SAFE`       | 100 μA   | Límite operativo (sin margen adicional: el fabricante ya garantiza operación continua a este valor) |
 | `I_TRIP_FACTOR`| 1.2      | Factor de disparo software (120 % de ISET)        |
 
 #### Parámetros del módulo CAEN DT5533EN
