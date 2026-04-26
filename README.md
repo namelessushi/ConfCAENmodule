@@ -1,6 +1,37 @@
-# ConfCAENmodule — HV Control System for PMT Detector
+# ConfCAENmodule — High-Voltage Control for PMT-Based Particle Detectors
 
-Software de control de alto voltaje (HV) para módulos **CAEN DT55XXE** orientado a detectores con fotomultiplicadores (PMT). Implementado en Python con arquitectura modular, seguridad activa y logging CSV rotativo.
+Sistema de control de alto voltaje (HV) para fotomultiplicadores (PMT) **Hamamatsu R14374** operados en experimentos de física de partículas. Implementa el control preciso del voltaje de polarización del PMT mediante un módulo **CAEN DT5533EN**, garantizando la ganancia estable y reproducible que todo experimento basado en centelleo requiere.
+
+> **Contexto físico**: El rendimiento de un PMT —su ganancia, linealidad y ruido— depende directamente del voltaje de alimentación aplicado entre fotocátodo y ánodo. Este módulo software proporciona el control de esa variable física con la precisión, seguridad y trazabilidad necesarias para experimentos de laboratorio.
+
+---
+
+## 🔬 Rol en el pipeline de detección
+
+```
+Partícula / fotón
+        │
+        ▼
+┌───────────────┐
+│  Centelleador  │  (conversión energía → fotones ópticos)
+└───────┬───────┘
+        │ fotones UV-Vis
+        ▼
+┌───────────────┐
+│  PMT R14374   │  ← voltaje de polarización controlado por este módulo
+│  Hamamatsu    │     (fotoefecto + multiplicación en dinodos)
+└───────┬───────┘
+        │ pulso de carga
+        ▼
+┌───────────────────┐
+│  Red Pitaya DAQ   │  (adquisición y digitalización — proyecto externo)
+└───────┬───────────┘
+        │ datos digitales
+        ▼
+     Análisis
+```
+
+La adquisición y digitalización de las señales del PMT es responsabilidad del sistema **Red Pitaya**, desarrollado de forma independiente por un colega de laboratorio. Este repositorio se centra exclusivamente en el control del HV de polarización del detector. Consulta [INTEGRATION.md](INTEGRATION.md) para más detalles sobre la arquitectura completa.
 
 ---
 
@@ -16,6 +47,24 @@ Software de control de alto voltaje (HV) para módulos **CAEN DT55XXE** orientad
 | **Logging CSV diario rotativo** | Registro automático por día en `logs/` con headers automáticos |
 | **Persistencia de estado** | Guarda y restaura el estado del sistema en `hv_state.json` |
 | **Modo mock** | Backend simulado para desarrollo y pruebas sin hardware |
+
+---
+
+## ⚡ Por qué importa el control preciso del HV
+
+La ganancia de un PMT sigue una ley potencial respecto al voltaje de alimentación:
+
+```
+G ∝ V^n
+```
+
+donde `n` es típicamente 6–8 para el Hamamatsu R14374. Esto significa que una variación de solo **1 % en el voltaje** produce una variación de **6–8 % en la ganancia**, afectando directamente la calibración y resolución energética del detector. Por ello este módulo:
+
+- Implementa ramping controlado (25 V/s) para evitar sobretensiones transitorias.
+- Monitorea en tiempo real la desviación entre voltaje solicitado (VSET) y medido (VMON).
+- Detecta inestabilidades que degradarían la resolución energética del experimento.
+
+Consulta [THEORY.md](THEORY.md) para la física del PMT y la justificación de los parámetros operativos.
 
 ---
 
@@ -66,7 +115,7 @@ ConfCAENmodule/
 │   ├── watchdog.py       # Watchdog de seguridad (HVWatchdog)
 │   ├── state.py          # Definición de estados de canal
 │   ├── state_manager.py  # Persistencia de estado en JSON
-│   ├── safety.py         # Lógica de seguridad adicional
+│   ├── safety.py         # Límites físicos del PMT y lógica de seguridad
 │   ├── logger.py         # Configuración del logger estándar
 │   ├── alarm_manager.py  # Orquestador de alarmas
 │   │
@@ -83,9 +132,11 @@ ConfCAENmodule/
 │       ├── caen.py       # Backend real (comunicación CAEN via pyvisa)
 │       └── mock.py       # Backend simulado para pruebas
 │
-├── architecture.md       # Diagrama de arquitectura del sistema
-├── HARDWARE.md           # Descripción del hardware controlado
-├── SAFETY.md             # Protecciones de seguridad implementadas
+├── THEORY.md             # Física del PMT: ganancia, ruido y rol del HV
+├── INTEGRATION.md        # Sistema completo: CAEN → PMT → Red Pitaya DAQ
+├── architecture.md       # Diagrama de arquitectura del software
+├── HARDWARE.md           # Especificaciones del PMT y del módulo CAEN
+├── SAFETY.md             # Protecciones de seguridad del detector
 └── .gitignore
 ```
 
@@ -149,9 +200,11 @@ Los parámetros de operación se configuran en el diccionario `CONFIG` en `hv_ru
 
 ---
 
-## 🔒 Notas de seguridad
+## 🔒 Notas de seguridad del detector
 
 > ⚠️ **Este sistema controla alto voltaje (HV). Leer `SAFETY.md` y `HARDWARE.md` antes de operar.**
+
+El control seguro del HV no es solo una cuestión de protección del personal, sino de **integridad del detector**. Un transitorio de voltaje o una sobrecorriente pueden dañar irreversiblemente la cadena de dinodos del PMT:
 
 - El **watchdog** monitorea continuamente el estado del sistema; ante cualquier fallo crítico ejecuta `backend.shutdown_all()` para apagar todos los canales.
 - El **deadman** detecta inactividad del proceso principal y también dispara el apagado.
@@ -200,3 +253,15 @@ Timestamp,Channel,Voltage_V,Current_A,Status
 ## 📄 Licencia
 
 Este proyecto es de uso interno para experimentos con detectores de partículas. Consultar con el autor para condiciones de uso y redistribución.
+
+---
+
+## 📚 Documentación adicional
+
+| Documento | Contenido |
+|---|---|
+| [THEORY.md](THEORY.md) | Física del PMT: fotoefecto, multiplicación en dinodos, curva de ganancia G(V) |
+| [INTEGRATION.md](INTEGRATION.md) | Arquitectura del sistema completo y relación con Red Pitaya DAQ |
+| [HARDWARE.md](HARDWARE.md) | Especificaciones del PMT Hamamatsu R14374 y del módulo CAEN DT5533EN |
+| [SAFETY.md](SAFETY.md) | Protecciones software y hardware para la integridad del detector |
+| [architecture.md](architecture.md) | Diagrama de capas y descripción de componentes del software |

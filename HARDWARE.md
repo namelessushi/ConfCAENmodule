@@ -2,11 +2,44 @@
 
 ## Resumen
 
-Este documento describe el hardware controlado por ConfCAENmodule: el módulo de alto voltaje CAEN DT5533EN, el fotomultiplicador (PMT) Hamamatsu R14374, el esquema de conexión físico, el protocolo de comunicación y las consideraciones de integración con Raspberry Pi.
+Este documento describe el sistema de detección desde el punto de vista físico-instrumental: primero el detector principal (PMT Hamamatsu R14374) y su base divisora de tensión, y a continuación el instrumento de control (CAEN DT5533EN) que suministra el alto voltaje de polarización. Se incluyen el esquema de conexión físico, el protocolo de comunicación y las consideraciones de integración con Raspberry Pi.
 
 ---
 
-## Módulo de Alto Voltaje: CAEN DT5533EN
+## Detector Principal: Fotomultiplicador (PMT) Hamamatsu R14374
+
+El PMT es el componente central del sistema de detección. Convierte fotones en señales eléctricas amplificadas mediante el efecto fotoeléctrico y la multiplicación secundaria en su cadena de dinodos. Su rendimiento depende directamente del voltaje de polarización aplicado (ver [THEORY.md](THEORY.md) para los fundamentos físicos).
+
+### Especificación Eléctrica
+
+| Parámetro                  | Valor                    |
+|----------------------------|--------------------------|
+| Fabricante                 | Hamamatsu Photonics      |
+| Modelo                     | R14374                   |
+| Tipo                       | PMT de ventana lateral   |
+| Tensión de alimentación    | 700 – 1500 V (positiva)  |
+| Tensión máxima absoluta    | 1500 V                   |
+| Corriente de oscuridad     | < 1 nA (típica)          |
+| Corriente de señal máxima  | 100 μA                   |
+| Sensibilidad espectral     | 185 – 650 nm             |
+| Pico de sensibilidad       | ~420 nm                  |
+| Ganancia típica            | 1×10⁶ a 1000 V          |
+
+### Parámetros Operativos Nominales (en ConfCAENmodule)
+
+| Parámetro | Valor configurado | Justificación                     |
+|-----------|-------------------|-----------------------------------|
+| VSET      | 1350 V            | Ganancia óptima para la aplicación|
+| ISET      | 100 μA            | Límite máximo del PMT             |
+| RUP       | 25 V/s            | Rampa conservadora para el PMT    |
+
+> **ADVERTENCIA**: No superar 1475 V (V_SAFE). El software lo impide mediante `check_user_params()`, pero un fallo de software no protege contra configuraciones manuales directas en el hardware.
+
+---
+
+## Instrumento de Control HV: CAEN DT5533EN
+
+El módulo CAEN DT5533EN es la fuente de alto voltaje que polariza el PMT. Actúa como **instrumento de control**: no es el detector en sí, sino el elemento que establece las condiciones eléctricas bajo las cuales opera el detector. Su precisión (< 0.1 V en voltaje, < 5 nA en corriente) y su bajo ripple (< 5 mV) son requisitos del experimento, no meras especificaciones de hardware.
 
 ### Especificación General
 
@@ -112,35 +145,6 @@ El `CAENBackend` implementa:
 - **Reintentos automáticos**: hasta 3 intentos por comando, con pausa de 0.2 s entre reintentos.
 - **Lock global (threading.Lock)**: todos los accesos al puerto son thread-safe.
 - **Parser tolerante**: `_parse_val()` recupera el campo `VAL:` incluso si la respuesta contiene basura adicional.
-
----
-
-## Fotomultiplicador (PMT): Hamamatsu R14374
-
-### Especificación Eléctrica
-
-| Parámetro                  | Valor                    |
-|----------------------------|--------------------------|
-| Fabricante                 | Hamamatsu Photonics      |
-| Modelo                     | R14374                   |
-| Tipo                       | PMT de ventana lateral   |
-| Tensión de alimentación    | 700 – 1500 V (positiva)  |
-| Tensión máxima absoluta    | 1500 V                   |
-| Corriente de oscuridad     | < 1 nA (típica)          |
-| Corriente de señal máxima  | 100 μA                   |
-| Sensibilidad espectral     | 185 – 650 nm             |
-| Pico de sensibilidad       | ~420 nm                  |
-| Ganancia típica            | 1×10⁶ a 1000 V          |
-
-### Parámetros Operativos Nominales (en ConfCAENmodule)
-
-| Parámetro | Valor configurado | Justificación                     |
-|-----------|-------------------|-----------------------------------|
-| VSET      | 1350 V            | Ganancia óptima para la aplicación|
-| ISET      | 100 μA            | Límite máximo del PMT             |
-| RUP       | 25 V/s            | Rampa conservadora para el PMT    |
-
-> **ADVERTENCIA**: No superar 1475 V (V_SAFE). El software lo impide mediante `check_user_params()`, pero un fallo de software no protege contra configuraciones manuales directas en el hardware.
 
 ---
 
@@ -336,6 +340,8 @@ El sistema es compatible con Raspberry Pi 3B+ y superiores. Se recomienda Pi 4 p
 
 ## Referencias Cruzadas
 
+- Física del PMT y justificación de parámetros operativos → [THEORY.md](THEORY.md)
+- Sistema de detección completo e integración con Red Pitaya → [INTEGRATION.md](INTEGRATION.md)
 - Límites de seguridad aplicados sobre este hardware → [SAFETY.md](SAFETY.md)
 - Arquitectura del software de control → [architecture.md](architecture.md)
 - Instalación y configuración inicial → [README.md](README.md)

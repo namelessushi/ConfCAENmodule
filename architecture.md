@@ -4,6 +4,19 @@
 
 ConfCAENmodule es un sistema de control y monitoreo de alto voltaje (HV) diseñado para operar fotomultiplicadores (PMT) Hamamatsu en entornos de física de partículas. El sistema implementa un modelo de capas con separación estricta de responsabilidades: adquisición de datos (Backend), lógica de canal (Channel/System), monitoreo en tiempo real (Monitor), vigilancia multinivel (Watchdog) y orquestación (Runner).
 
+### Motivación física
+
+La ganancia de un PMT varía como G ∝ V^n (n ≈ 7 para el R14374), lo que impone requerimientos estrictos sobre la estabilidad del voltaje de polarización. El diseño en capas de este sistema no es una elección estética: cada capa existe porque hay una consecuencia física si falla:
+
+| Capa | Componente | Consecuencia física si falla |
+|------|-----------|------------------------------|
+| Backend | CAENBackend | Sin comunicación con el módulo HV → detector sin polarización |
+| Canal/Sistema | HVChannel, HVSystem | Sin control de ramping → transitorios que pueden dañar el PMT |
+| Control | HVMonitor, HVWatchdog | Sin detección de anomalías → deriva de ganancia no detectada |
+| Operación | HVRunner | Sin persistencia de estado → pérdida de configuración calibrada |
+
+Consulta [THEORY.md](THEORY.md) para la física del PMT y la justificación cuantitativa de los umbrales de protección.
+
 ---
 
 ## Diagrama de Arquitectura de Capas
@@ -368,6 +381,8 @@ ConfCAENmodule/
 
 ## Referencias Cruzadas
 
+- Para la física del PMT y justificación de umbrales → [THEORY.md](THEORY.md)
+- Para el sistema de detección completo (CAEN → PMT → Red Pitaya) → [INTEGRATION.md](INTEGRATION.md)
 - Para detalles de cada protección de seguridad → [SAFETY.md](SAFETY.md)
 - Para especificaciones del hardware controlado → [HARDWARE.md](HARDWARE.md)
 - Para instalación y uso rápido → [README.md](README.md)
