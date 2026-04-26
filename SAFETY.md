@@ -4,6 +4,11 @@
 
 ConfCAENmodule implementa un sistema de seguridad de **cuatro capas independientes** para el control de alto voltaje (HV) sobre fotomultiplicadores (PMT) Hamamatsu R14374 mediante módulos CAEN DT5533EN. El diseño garantiza que un fallo en cualquier capa individual no comprometa la integridad del detector ni del personal.
 
+La seguridad en este contexto tiene una doble dimensión:
+
+1. **Seguridad del detector**: un transitorio de voltaje, una sobrecorriente o una inestabilidad sostenida pueden dañar irreversiblemente la cadena de dinodos del PMT o degradar el fotocátodo, afectando la calidad de los datos experimentales a largo plazo.
+2. **Seguridad del personal**: el sistema opera con voltajes de hasta 1350 V, que requieren procedimientos estrictos de manipulación.
+
 Las protecciones cubren:
 - Límites físicos absolutos definidos en software (`HVLimits`)
 - Máquina de estados finita (FSM) con transiciones validadas
@@ -301,6 +306,7 @@ Cuando el Watchdog detecta un fault en un canal (Protecciones 1–8):
 
 ## Referencias Cruzadas
 
+- Física del PMT y sensibilidad a variaciones de voltaje → [THEORY.md](THEORY.md)
 - Arquitectura del sistema y descripción de componentes → [architecture.md](architecture.md)
 - Especificaciones del hardware controlado → [HARDWARE.md](HARDWARE.md)
 - Configuración de parámetros operativos → [README.md](README.md)
